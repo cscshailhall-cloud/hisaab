@@ -1,0 +1,127 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "User Profile",
+      "description": "Staff or Admin profile information",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "displayName": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "staff"] },
+        "branchId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "role"]
+    },
+    "Customer": {
+      "title": "Customer",
+      "description": "Customer information",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "mobile": { "type": "string" },
+        "alternateMobile": { "type": "string" },
+        "address": { "type": "string" },
+        "aadhaar": { "type": "string" },
+        "pan": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "notes": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "mobile"]
+    },
+    "Service": {
+      "title": "Service",
+      "description": "Service offered by the center",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "category": { "type": "string" },
+        "price": { "type": "number" },
+        "commission": { "type": "number" },
+        "tax": { "type": "number" },
+        "turnaroundTime": { "type": "string" },
+        "description": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "inactive"] }
+      },
+      "required": ["name", "category", "price"]
+    },
+    "Bill": {
+      "title": "Bill",
+      "description": "Billing information",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "billNumber": { "type": "string" },
+        "customerId": { "type": "string" },
+        "customerName": { "type": "string" },
+        "services": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "serviceId": { "type": "string" },
+              "serviceName": { "type": "string" },
+              "price": { "type": "number" },
+              "quantity": { "type": "number" },
+              "tax": { "type": "number" }
+            }
+          }
+        },
+        "totalAmount": { "type": "number" },
+        "discount": { "type": "number" },
+        "taxAmount": { "type": "number" },
+        "payableAmount": { "type": "number" },
+        "paidAmount": { "type": "number" },
+        "dueAmount": { "type": "number" },
+        "paymentStatus": { "type": "string", "enum": ["paid", "partial", "unpaid"] },
+        "paymentMethod": { "type": "string" },
+        "branchId": { "type": "string" },
+        "staffId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["billNumber", "customerId", "totalAmount", "payableAmount"]
+    },
+    "Expense": {
+      "title": "Expense",
+      "description": "Expense tracking",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "category": { "type": "string" },
+        "amount": { "type": "number" },
+        "description": { "type": "string" },
+        "date": { "type": "string", "format": "date" },
+        "branchId": { "type": "string" },
+        "staffId": { "type": "string" }
+      },
+      "required": ["category", "amount", "date"]
+    },
+    "InventoryItem": {
+      "title": "Inventory Item",
+      "description": "Inventory tracking",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "quantity": { "type": "number" },
+        "unit": { "type": "string" },
+        "lowStockThreshold": { "type": "number" },
+        "branchId": { "type": "string" }
+      },
+      "required": ["name", "quantity"]
+    }
+  },
+  "firestore": {
+    "/users/{uid}": { "schema": "UserProfile", "description": "User profiles" },
+    "/customers/{customerId}": { "schema": "Customer", "description": "Customer records" },
+    "/services/{serviceId}": { "schema": "Service", "description": "Available services" },
+    "/bills/{billId}": { "schema": "Bill", "description": "Billing records" },
+    "/expenses/{expenseId}": { "schema": "Expense", "description": "Expense records" },
+    "/inventory/{itemId}": { "schema": "InventoryItem", "description": "Inventory records" }
+  }
+}
