@@ -1,7 +1,5 @@
 import { GoogleGenAI } from "@google/genai";
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-
 const SYSTEM_INSTRUCTION = `
 You are an AI assistant for "CSC Digital Center" (Khidmat Center). 
 Your goal is to assist customers with information about our services, billing, and general inquiries related to our business.
@@ -31,7 +29,16 @@ System Data Integration:
 `;
 
 export async function getChatbotResponse(userMessage: string, history: { role: "user" | "model", parts: { text: string }[] }[] = []) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  
+  if (!apiKey) {
+    console.warn("GEMINI_API_KEY is missing. AI Chatbot will be disabled.");
+    return "The AI assistant is not configured. Please add your GEMINI_API_KEY in the Settings menu.";
+  }
+
   try {
+    const ai = new GoogleGenAI({ apiKey });
+    
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
       contents: [
@@ -49,6 +56,9 @@ export async function getChatbotResponse(userMessage: string, history: { role: "
     return response.text || "I'm sorry, I couldn't process that request. How can I help you with our services?";
   } catch (error) {
     console.error("Gemini API Error:", error);
+    if (error instanceof Error && (error.message.includes("API Key") || error.message.includes("apiKey"))) {
+      return "The AI assistant is not configured correctly. Please check your GEMINI_API_KEY.";
+    }
     return "Our AI assistant is currently offline. Please contact us at +91 9876543210 for assistance.";
   }
 }

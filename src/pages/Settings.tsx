@@ -9,7 +9,8 @@ import {
   Bell,
   Save,
   Upload,
-  FileText
+  FileText,
+  CheckCircle2
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -18,6 +19,7 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { cn } from "@/lib/utils";
 import { 
   Select, 
   SelectContent, 
@@ -266,23 +268,87 @@ export default function Settings() {
               </div>
 
               <div className="space-y-4 pt-4 border-t border-gray-50">
-                <h4 className="font-bold text-sm">Template Preview</h4>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <h4 className="font-bold text-sm">Select Default A4 Template</h4>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
                   {[
-                    { id: 'modern', name: 'Modern A4', img: 'https://picsum.photos/seed/bill1/200/280' },
-                    { id: 'classic', name: 'Classic A4', img: 'https://picsum.photos/seed/bill2/200/280' },
-                    { id: 'minimal', name: 'Minimalist', img: 'https://picsum.photos/seed/bill3/200/280' },
+                    { 
+                      id: 'modern', 
+                      name: 'Modern Blue', 
+                      description: 'Clean, bold headers with accent colors.',
+                      img: 'https://picsum.photos/seed/modern-bill/400/560' 
+                    },
+                    { 
+                      id: 'classic', 
+                      name: 'Classic Professional', 
+                      description: 'Traditional layout with structured tables.',
+                      img: 'https://picsum.photos/seed/classic-bill/400/560' 
+                    },
+                    { 
+                      id: 'minimal', 
+                      name: 'Minimalist', 
+                      description: 'Lightweight design focusing on content.',
+                      img: 'https://picsum.photos/seed/minimal-bill/400/560' 
+                    },
                   ].map((t) => (
-                    <div key={t.id} className="group relative cursor-pointer">
-                      <div className="aspect-[1/1.4] rounded-lg border-2 border-gray-100 overflow-hidden group-hover:border-blue-500 transition-all">
+                    <div 
+                      key={t.id} 
+                      className={cn(
+                        "group relative cursor-pointer rounded-xl border-2 transition-all overflow-hidden",
+                        t.id === 'modern' ? "border-blue-600 ring-2 ring-blue-100" : "border-gray-100 hover:border-blue-200"
+                      )}
+                    >
+                      <div className="aspect-[1/1.4] relative">
                         <img src={t.img} alt={t.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                        {t.id === 'modern' && (
+                          <div className="absolute top-2 right-2 bg-blue-600 text-white p-1 rounded-full">
+                            <CheckCircle2 className="w-4 h-4" />
+                          </div>
+                        )}
+                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity gap-2">
                           <Button variant="secondary" size="sm">Preview</Button>
+                          <Button size="sm" className="bg-blue-600">Select</Button>
                         </div>
                       </div>
-                      <p className="text-xs font-bold text-center mt-2">{t.name}</p>
+                      <div className="p-3 bg-white border-t">
+                        <p className="text-sm font-bold text-gray-900">{t.name}</p>
+                        <p className="text-[10px] text-gray-500 mt-0.5">{t.description}</p>
+                      </div>
                     </div>
                   ))}
+                </div>
+              </div>
+
+              <div className="space-y-4 pt-4 border-t border-gray-50">
+                <h4 className="font-bold text-sm">Template Customization</h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="space-y-3">
+                    <Label className="text-xs text-gray-500 uppercase font-bold">Accent Color</Label>
+                    <div className="flex gap-3">
+                      {["#2563eb", "#10b981", "#f59e0b", "#ef4444", "#141414"].map((color) => (
+                        <button 
+                          key={color}
+                          className={cn(
+                            "w-8 h-8 rounded-full border-2 border-white ring-1 ring-gray-200 transition-transform hover:scale-110",
+                            color === "#2563eb" && "ring-blue-600 ring-2"
+                          )}
+                          style={{ backgroundColor: color }}
+                        ></button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="space-y-3">
+                    <Label className="text-xs text-gray-500 uppercase font-bold">Font Family</Label>
+                    <Select defaultValue="inter">
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="inter">Inter (Sans-serif)</SelectItem>
+                        <SelectItem value="roboto">Roboto (Classic)</SelectItem>
+                        <SelectItem value="mono">JetBrains Mono (Technical)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
               </div>
 
