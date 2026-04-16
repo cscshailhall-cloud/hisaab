@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { 
   Search, 
   Filter, 
@@ -47,26 +47,46 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { 
+  collection, 
+  onSnapshot, 
+  query, 
+  orderBy, 
+  deleteDoc, 
+  doc 
+} from "firebase/firestore";
+import { db } from "@/lib/firebase";
 
-const mockInvoices = [
-  { id: "INV-2024-001", customer: "Rahul Sharma", date: "2024-03-10", amount: 250, status: "Paid", method: "UPI" },
-  { id: "INV-2024-002", customer: "Priya Patel", date: "2024-03-12", amount: 1500, status: "Pending", method: "-" },
-  { id: "INV-2024-003", customer: "Amit Kumar", date: "2024-03-14", amount: 2800, status: "Paid", method: "Cash" },
-  { id: "INV-2024-004", customer: "Sneha Reddy", date: "2024-03-15", amount: 6200, status: "Paid", method: "Card" },
-  { id: "INV-2024-005", customer: "Vikram Singh", date: "2024-03-16", amount: 750, status: "Overdue", method: "-" },
-];
+interface Invoice {
+  id: string;
+  invoiceNo: string;
+  customerName: string;
+  date: string;
+  amount: number;
+  status: string;
+  method: string;
+}
 
 export default function Invoices() {
+  const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedInvoice, setSelectedInvoice] = useState<any>(null);
   const [showPreview, setShowPreview] = useState(false);
 
+  useEffect(() => {
+    const q = query(collection(db, "invoices"), orderBy("createdAt", "desc"));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      setInvoices(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Invoice)));
+    });
+    return () => unsubscribe();
+  }, []);
+
   const filteredInvoices = useMemo(() => {
-    return mockInvoices.filter(invoice => 
-      invoice.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      invoice.customer.toLowerCase().includes(searchTerm.toLowerCase())
+    return invoices.filter(invoice => 
+      invoice.invoiceNo?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      invoice.customerName?.toLowerCase().includes(searchTerm.toLowerCase())
     );
-  }, [searchTerm]);
+  }, [searchTerm, invoices]);
 
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -81,23 +101,30 @@ export default function Invoices() {
     }
   };
 
-  const handleAction = (action: string, invoice: any) => {
+  const handleAction = async (action: string, invoice: any) => {
     switch (action) {
       case "view":
         setSelectedInvoice(invoice);
         setShowPreview(true);
         break;
       case "download":
-        toast.success(`Downloading ${invoice.id}...`);
+        toast.success(`Downloading ${invoice.invoiceNo}...`);
         break;
       case "share":
-        toast.success(`Sharing ${invoice.id} via WhatsApp...`);
+        toast.success(`Sharing ${invoice.invoiceNo} via WhatsApp...`);
         break;
       case "delete":
-        toast.error(`${invoice.id} deleted.`);
+        if (confirm(`Are you sure you want to delete ${invoice.invoiceNo}?`)) {
+          try {
+            await deleteDoc(doc(db, "invoices", invoice.id));
+            toast.success("Invoice deleted");
+          } catch (error) {
+            toast.error("Failed to delete invoice");
+          }
+        }
         break;
       case "edit":
-        toast.info(`Editing ${invoice.id}...`);
+        toast.info(`Editing ${invoice.invoiceNo}...`);
         break;
     }
   };
@@ -177,9 +204,9 @@ export default function Invoices() {
               <TableBody>
                 {filteredInvoices.map((invoice) => (
                   <TableRow key={invoice.id} className="hover:bg-gray-50 transition-colors">
-                    <TableCell className="font-medium text-blue-600">{invoice.id}</TableCell>
-                    <TableCell className="font-medium">{invoice.customer}</TableCell>
-                    <TableCell className="text-gray-500">{invoice.date}</TableCell>
+                    <TableCell className="font-medium text-blue-600">{invoice.invoiceNo}</TableCell>
+                    <TableCell className="font-medium">{invoice.customerName}</TableCell>
+                    <TableCell className="text-gray-500">{new Date(invoice.date).toLocaleDateString()}</TableCell>
                     <TableCell className="font-bold">₹{invoice.amount}</TableCell>
                     <TableCell>{getStatusBadge(invoice.status)}</TableCell>
                     <TableCell>
@@ -191,9 +218,11 @@ export default function Invoices() {
                           <Eye className="w-4 h-4 text-gray-400" />
                         </Button>
                         <DropdownMenu>
-                          <DropdownMenuTrigger render={<Button variant="ghost" size="icon" className="h-8 w-8" />}>
-                            <MoreHorizontal className="w-4 h-4" />
-                          </DropdownMenuTrigger>
+                          <DropdownMenuTrigger render={
+                            <Button variant="ghost" size="icon" className="h-8 w-8">
+                              <MoreHorizontal className="w-4 h-4" />
+                            </Button>
+                          } />
                           <DropdownMenuContent align="end" className="w-48">
                             <DropdownMenuLabel>Invoice Actions</DropdownMenuLabel>
                             <DropdownMenuSeparator />
@@ -231,7 +260,7 @@ export default function Invoices() {
           <div className="bg-blue-600 p-6 text-white flex justify-between items-center">
             <div>
               <DialogTitle className="text-xl">Invoice Preview</DialogTitle>
-              <p className="text-blue-100 text-sm mt-1">{selectedInvoice?.id} • {selectedInvoice?.date}</p>
+              <p className="text-blue-100 text-sm mt-1">{selectedInvoice?.invoiceNo} • {selectedInvoice?.date ? new Date(selectedInvoice.date).toLocaleDateString() : ''}</p>
             </div>
             <div className="bg-white/20 p-2 rounded-lg">
               <FileText className="w-8 h-8" />
@@ -242,13 +271,13 @@ export default function Invoices() {
             <div className="flex justify-between items-start">
               <div>
                 <Label className="text-xs text-gray-400 uppercase font-bold">Customer</Label>
-                <p className="font-bold text-gray-900">{selectedInvoice?.customer}</p>
+                <p className="font-bold text-gray-900">{selectedInvoice?.customerName}</p>
               </div>
               <div className="text-right">
                 <Label className="text-xs text-gray-400 uppercase font-bold">Total Amount</Label>
-                <p className="text-2xl font-black text-gray-900">₹{selectedInvoice?.amount.toFixed(2)}</p>
+                <p className="text-2xl font-black text-gray-900">₹{selectedInvoice?.amount?.toFixed(2)}</p>
                 <Badge variant={selectedInvoice?.status === 'Paid' ? 'default' : 'destructive'} className="mt-1">
-                  {selectedInvoice?.status.toUpperCase()}
+                  {selectedInvoice?.status?.toUpperCase()}
                 </Badge>
               </div>
             </div>

@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { 
   Plus, 
   Search, 
@@ -50,21 +50,34 @@ import {
   DialogDescription,
   DialogFooter
 } from "@/components/ui/dialog";
+import { 
+  collection, 
+  onSnapshot, 
+  addDoc, 
+  query, 
+  orderBy, 
+  serverTimestamp,
+  doc,
+  updateDoc,
+  increment,
+  getDoc
+} from "firebase/firestore";
+import { db } from "@/lib/firebase";
+import jsPDF from "jspdf";
+import html2canvas from "html2canvas";
 
-const mockServices = [
-  { id: "s1", name: "PAN Card New", price: 250, category: "Government" },
-  { id: "s2", name: "Passport Application", price: 1500, category: "Government" },
-  { id: "s3", name: "Aadhaar Update", price: 100, category: "Government" },
-  { id: "s4", name: "Mobile Recharge", price: 0, category: "Utility" },
-  { id: "s5", name: "Electricity Bill", price: 0, category: "Utility" },
-  { id: "s6", name: "Insurance Renewal", price: 500, category: "Insurance" },
-];
+interface Service {
+  id: string;
+  name: string;
+  price: number;
+  category: string;
+}
 
-const mockCustomers = [
-  { id: "c1", name: "Rahul Sharma", mobile: "9876543210" },
-  { id: "c2", name: "Priya Patel", mobile: "9876543211" },
-  { id: "c3", name: "Amit Kumar", mobile: "9876543212" },
-];
+interface Customer {
+  id: string;
+  name: string;
+  mobile: string;
+}
 
 interface SelectedService {
   id: string;
@@ -75,6 +88,8 @@ interface SelectedService {
 }
 
 export default function Billing() {
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [services, setServices] = useState<Service[]>([]);
   const [selectedCustomer, setSelectedCustomer] = useState<string>("");
   const [customerSearch, setCustomerSearch] = useState("");
   const [serviceSearch, setServiceSearch] = useState("");
@@ -84,20 +99,37 @@ export default function Billing() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [showBillDialog, setShowBillDialog] = useState(false);
   const [tempSelectedServices, setTempSelectedServices] = useState<string[]>([]);
+  const [generatedInvoiceId, setGeneratedInvoiceId] = useState("");
+  const [showAddCustomerDialog, setShowAddCustomerDialog] = useState(false);
+  const [newCustomer, setNewCustomer] = useState({ name: "", mobile: "" });
+  const [isAddingCustomer, setIsAddingCustomer] = useState(false);
+
+  useEffect(() => {
+    const unsubCustomers = onSnapshot(collection(db, "customers"), (snapshot) => {
+      setCustomers(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Customer)));
+    });
+    const unsubServices = onSnapshot(collection(db, "services"), (snapshot) => {
+      setServices(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Service)));
+    });
+    return () => {
+      unsubCustomers();
+      unsubServices();
+    };
+  }, []);
 
   const filteredCustomers = useMemo(() => {
-    return mockCustomers.filter(c => 
+    return customers.filter(c => 
       c.name.toLowerCase().includes(customerSearch.toLowerCase()) || 
       c.mobile.includes(customerSearch)
     );
-  }, [customerSearch]);
+  }, [customerSearch, customers]);
 
   const filteredServices = useMemo(() => {
-    return mockServices.filter(s => 
+    return services.filter(s => 
       s.name.toLowerCase().includes(serviceSearch.toLowerCase()) || 
       s.category.toLowerCase().includes(serviceSearch.toLowerCase())
     );
-  }, [serviceSearch]);
+  }, [serviceSearch, services]);
 
   const subtotal = useMemo(() => {
     return selectedServices.reduce((acc, curr) => acc + (curr.price * curr.quantity), 0);
@@ -110,7 +142,7 @@ export default function Billing() {
   const total = subtotal + taxAmount - discount;
 
   const addService = (serviceId: string) => {
-    const service = mockServices.find(s => s.id === serviceId);
+    const service = services.find(s => s.id === serviceId);
     if (!service) return;
 
     const existing = selectedServices.find(s => s.id === serviceId);
@@ -142,7 +174,7 @@ export default function Billing() {
 
   const addMultipleServices = () => {
     const newServices = tempSelectedServices.map(id => {
-      const service = mockServices.find(s => s.id === id);
+      const service = services.find(s => s.id === id);
       return {
         id: service!.id,
         name: service!.name,
@@ -161,7 +193,7 @@ export default function Billing() {
     toast.success(`${newServices.length} services added`);
   };
 
-  const handleGenerateBill = () => {
+  const handleGenerateBill = async () => {
     if (!selectedCustomer) {
       toast.error("Please select a customer");
       return;
@@ -172,8 +204,38 @@ export default function Billing() {
     }
 
     setIsGenerating(true);
-    setTimeout(() => {
-      setIsGenerating(false);
+    try {
+      const invoiceNo = `INV-${Date.now().toString().slice(-6)}`;
+      const customer = customers.find(c => c.id === selectedCustomer);
+      
+      const invoiceData = {
+        invoiceNo,
+        customerId: selectedCustomer,
+        customerName: customer?.name || "Unknown",
+        date: new Date().toISOString(),
+        amount: total,
+        status: paymentMethod === 'not_paid' ? 'Pending' : 'Paid',
+        method: paymentMethod,
+        items: selectedServices,
+        discount,
+        taxAmount,
+        subtotal,
+        createdAt: serverTimestamp(),
+      };
+
+      const docRef = await addDoc(collection(db, "invoices"), invoiceData);
+      setGeneratedInvoiceId(docRef.id);
+
+      // Update customer stats
+      const customerRef = doc(db, "customers", selectedCustomer);
+      await updateDoc(customerRef, {
+        totalSpent: increment(total),
+        billsCount: increment(1),
+        outstanding: increment(paymentMethod === 'not_paid' ? total : 0),
+        totalPaid: increment(paymentMethod !== 'not_paid' ? total : 0),
+        lastVisit: new Date().toISOString()
+      });
+
       setShowBillDialog(true);
       if (paymentMethod === 'not_paid') {
         toast.warning("Bill generated as Pending", {
@@ -182,11 +244,160 @@ export default function Billing() {
       } else {
         toast.success("Bill generated successfully!");
       }
-    }, 1000);
+    } catch (error) {
+      console.error("Error generating bill:", error);
+      toast.error("Failed to generate bill");
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const handleQuickAddCustomer = async () => {
+    if (!newCustomer.name || !newCustomer.mobile) {
+      toast.error("Name and Mobile are required");
+      return;
+    }
+    setIsAddingCustomer(true);
+    try {
+      const docRef = await addDoc(collection(db, "customers"), {
+        ...newCustomer,
+        outstanding: 0,
+        totalSpent: 0,
+        totalPaid: 0,
+        billsCount: 0,
+        createdAt: serverTimestamp(),
+      });
+      setSelectedCustomer(docRef.id);
+      setShowAddCustomerDialog(false);
+      setNewCustomer({ name: "", mobile: "" });
+      toast.success("Customer added and selected");
+    } catch (error) {
+      toast.error("Failed to add customer");
+    } finally {
+      setIsAddingCustomer(false);
+    }
+  };
+
+  const handleDownloadPDF = async () => {
+    const element = document.getElementById("invoice-template");
+    if (!element) return;
+
+    toast.info("Preparing PDF...");
+    try {
+      const canvas = await html2canvas(element, {
+        scale: 2,
+        useCORS: true,
+        logging: false,
+      });
+      const imgData = canvas.toDataURL("image/png");
+      const pdf = new jsPDF("p", "mm", "a4");
+      const imgProps = pdf.getImageProperties(imgData);
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
+      
+      pdf.addImage(imgData, "PNG", 0, 0, pdfWidth, pdfHeight);
+      pdf.save(`Invoice_${generatedInvoiceId || 'Bill'}.pdf`);
+      toast.success("PDF Downloaded!");
+    } catch (error) {
+      console.error("PDF Generation Error:", error);
+      toast.error("Failed to generate PDF");
+    }
   };
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+      {/* Hidden Invoice Template for PDF Generation */}
+      <div className="fixed -left-[9999px] top-0">
+        <div id="invoice-template" className="w-[210mm] min-h-[297mm] bg-white p-10 text-gray-900 font-sans">
+          <div className="flex justify-between items-start border-b-4 border-blue-600 pb-6 mb-8">
+            <div>
+              <h1 className="text-4xl font-black text-blue-600 uppercase tracking-tighter">INVOICE</h1>
+              <p className="text-gray-500 mt-1 font-bold">#{Date.now().toString().slice(-6)}</p>
+            </div>
+            <div className="text-right">
+              <h2 className="text-xl font-bold">CSC Digital Center</h2>
+              <p className="text-sm text-gray-500">123, Main Market, Sector 15, New Delhi</p>
+              <p className="text-sm text-gray-500">Contact: +91 9876543210</p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-12 mb-10">
+            <div>
+              <p className="text-xs font-black text-blue-600 uppercase mb-2 tracking-widest">Bill To</p>
+              <h3 className="text-lg font-bold">{customers.find(c => c.id === selectedCustomer)?.name || "Customer Name"}</h3>
+              <p className="text-sm text-gray-500">{customers.find(c => c.id === selectedCustomer)?.mobile}</p>
+            </div>
+            <div className="text-right">
+              <p className="text-xs font-black text-blue-600 uppercase mb-2 tracking-widest">Invoice Details</p>
+              <p className="text-sm"><span className="font-bold">Date:</span> {new Date().toLocaleDateString()}</p>
+              <p className="text-sm"><span className="font-bold">Payment:</span> {paymentMethod.toUpperCase()}</p>
+            </div>
+          </div>
+
+          <table className="w-full mb-10">
+            <thead>
+              <tr className="bg-blue-600 text-white">
+                <th className="py-3 px-4 text-left font-bold uppercase text-xs">Description</th>
+                <th className="py-3 px-4 text-center font-bold uppercase text-xs">Qty</th>
+                <th className="py-3 px-4 text-right font-bold uppercase text-xs">Unit Price</th>
+                <th className="py-3 px-4 text-right font-bold uppercase text-xs">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {selectedServices.map((item, idx) => (
+                <tr key={idx} className="border-b border-gray-100">
+                  <td className="py-4 px-4 text-sm font-medium">{item.name}</td>
+                  <td className="py-4 px-4 text-center text-sm">{item.quantity}</td>
+                  <td className="py-4 px-4 text-right text-sm">₹{item.price.toFixed(2)}</td>
+                  <td className="py-4 px-4 text-right text-sm font-bold">₹{(item.price * item.quantity).toFixed(2)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          <div className="flex justify-end">
+            <div className="w-64 space-y-2">
+              <div className="flex justify-between text-sm text-gray-500">
+                <span>Subtotal</span>
+                <span>₹{subtotal.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between text-sm text-gray-500">
+                <span>Tax (GST 18%)</span>
+                <span>₹{taxAmount.toFixed(2)}</span>
+              </div>
+              {discount > 0 && (
+                <div className="flex justify-between text-sm text-red-500">
+                  <span>Discount</span>
+                  <span>-₹{discount.toFixed(2)}</span>
+                </div>
+              )}
+              <div className="flex justify-between items-center pt-4 border-t-2 border-blue-600">
+                <span className="text-lg font-black text-blue-600 uppercase">Total</span>
+                <span className="text-2xl font-black text-gray-900">₹{total.toFixed(2)}</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-20 pt-10 border-t border-gray-100 grid grid-cols-2 gap-10">
+            <div>
+              <p className="text-xs font-black text-blue-600 uppercase mb-2 tracking-widest">Terms & Conditions</p>
+              <p className="text-[10px] text-gray-400 leading-relaxed">
+                1. Goods once sold will not be taken back.<br/>
+                2. This is a computer generated invoice.<br/>
+                3. Payment should be made within 7 days.
+              </p>
+            </div>
+            <div className="text-right flex flex-col items-end justify-end">
+              <div className="w-32 h-1 bg-gray-900 mb-2"></div>
+              <p className="text-xs font-bold uppercase">Authorized Signature</p>
+            </div>
+          </div>
+          
+          <div className="mt-10 text-center">
+            <p className="text-sm font-bold text-blue-600 italic">Thank you for your business!</p>
+          </div>
+        </div>
+      </div>
       <div className="lg:col-span-2 space-y-6">
         <Card className="border-none shadow-sm">
           <CardHeader>
@@ -199,12 +410,14 @@ export default function Billing() {
                 <Label>Customer</Label>
                 <div className="flex gap-2">
                   <Popover>
-                    <PopoverTrigger render={<Button variant="outline" className="flex-1 justify-between font-normal" />}>
-                      {selectedCustomer 
-                        ? mockCustomers.find(c => c.id === selectedCustomer)?.name 
-                        : "Select customer..."}
-                      <Search className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                    </PopoverTrigger>
+                    <PopoverTrigger render={
+                      <Button variant="outline" className="flex-1 justify-between font-normal">
+                        {selectedCustomer 
+                          ? customers.find(c => c.id === selectedCustomer)?.name 
+                          : "Select customer..."}
+                        <Search className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                      </Button>
+                    } />
                     <PopoverContent className="w-[300px] p-0" align="start">
                       <div className="p-2 border-b">
                         <Input 
@@ -233,7 +446,7 @@ export default function Billing() {
                       </div>
                     </PopoverContent>
                   </Popover>
-                  <Button variant="outline" size="icon">
+                  <Button variant="outline" size="icon" onClick={() => setShowAddCustomerDialog(true)}>
                     <UserPlus className="w-4 h-4" />
                   </Button>
                 </div>
@@ -242,10 +455,12 @@ export default function Billing() {
                 <Label>Add Services</Label>
                 <div className="flex gap-2">
                   <Popover>
-                    <PopoverTrigger render={<Button variant="outline" className="flex-1 justify-between font-normal" />}>
-                      Select services...
-                      <Plus className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                    </PopoverTrigger>
+                    <PopoverTrigger render={
+                      <Button variant="outline" className="flex-1 justify-between font-normal">
+                        Select services...
+                        <Plus className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                      </Button>
+                    } />
                     <PopoverContent className="w-[350px] p-0" align="start">
                       <div className="p-2 border-b">
                         <Input 
@@ -464,8 +679,8 @@ export default function Billing() {
             <div className="flex justify-between items-start">
               <div>
                 <Label className="text-xs text-gray-400 uppercase font-bold">Customer</Label>
-                <p className="font-bold text-gray-900">{mockCustomers.find(c => c.id === selectedCustomer)?.name}</p>
-                <p className="text-sm text-gray-500">{mockCustomers.find(c => c.id === selectedCustomer)?.mobile}</p>
+                <p className="font-bold text-gray-900">{customers.find(c => c.id === selectedCustomer)?.name}</p>
+                <p className="text-sm text-gray-500">{customers.find(c => c.id === selectedCustomer)?.mobile}</p>
               </div>
               <div className="text-right">
                 <Label className="text-xs text-gray-400 uppercase font-bold">Amount Due</Label>
@@ -501,19 +716,19 @@ export default function Billing() {
             <div className="space-y-3">
               <h4 className="text-sm font-bold text-gray-900 border-b pb-2">Bill Options</h4>
               <div className="grid grid-cols-2 gap-4">
-                <Button variant="outline" className="h-20 flex flex-col gap-2">
+                <Button variant="outline" className="h-20 flex flex-col gap-2" onClick={handleDownloadPDF}>
                   <FileDown className="w-6 h-6 text-blue-600" />
                   <span>Download A4 PDF</span>
                 </Button>
-                <Button variant="outline" className="h-20 flex flex-col gap-2">
+                <Button variant="outline" className="h-20 flex flex-col gap-2" onClick={() => toast.info("Thermal printing simulation...")}>
                   <Printer className="w-6 h-6 text-gray-600" />
                   <span>Print Thermal (2-inch)</span>
                 </Button>
-                <Button variant="outline" className="h-20 flex flex-col gap-2">
+                <Button variant="outline" className="h-20 flex flex-col gap-2" onClick={() => toast.info("Image export simulation...")}>
                   <ImageIcon className="w-6 h-6 text-purple-600" />
                   <span>Export as Image</span>
                 </Button>
-                <Button variant="outline" className="h-20 flex flex-col gap-2">
+                <Button variant="outline" className="h-20 flex flex-col gap-2" onClick={() => toast.info("QR Code generation...")}>
                   <QrCode className="w-6 h-6 text-green-600" />
                   <span>Show Payment QR</span>
                 </Button>
@@ -536,6 +751,38 @@ export default function Billing() {
               }}>Send Now</Button>
             </div>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showAddCustomerDialog} onOpenChange={setShowAddCustomerDialog}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Quick Add Customer</DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label htmlFor="quick-name">Full Name</Label>
+              <Input 
+                id="quick-name" 
+                value={newCustomer.name}
+                onChange={(e) => setNewCustomer({...newCustomer, name: e.target.value})}
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="quick-mobile">Mobile Number</Label>
+              <Input 
+                id="quick-mobile" 
+                value={newCustomer.mobile}
+                onChange={(e) => setNewCustomer({...newCustomer, mobile: e.target.value})}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowAddCustomerDialog(false)}>Cancel</Button>
+            <Button className="bg-blue-600" onClick={handleQuickAddCustomer} disabled={isAddingCustomer}>
+              {isAddingCustomer ? "Adding..." : "Add & Select"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

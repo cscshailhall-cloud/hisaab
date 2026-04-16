@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { 
   Plus, 
   Search, 
@@ -42,42 +42,112 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { 
+  collection, 
+  onSnapshot, 
+  addDoc, 
+  query, 
+  orderBy, 
+  serverTimestamp,
+  deleteDoc,
+  doc
+} from "firebase/firestore";
+import { db } from "@/lib/firebase";
+import { 
+  Dialog, 
+  DialogContent, 
+  DialogHeader, 
+  DialogTitle, 
+  DialogDescription,
+  DialogFooter
+} from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
 
-const mockCustomers = [
-  { 
-    id: "1", 
-    name: "Rahul Sharma", 
-    mobile: "9876543210", 
-    email: "rahul@example.com", 
-    address: "New Delhi", 
-    bills: 12, 
-    totalSpent: 4500, 
-    totalPaid: 4000,
-    outstanding: 500,
-    lastVisit: "2024-03-10",
-    history: [
-      { id: "h1", date: "2024-03-10", type: "Bill", description: "PAN Card Application", amount: 250, status: "Paid", method: "UPI" },
-      { id: "h2", date: "2024-03-05", type: "Bill", description: "Passport Service", amount: 1500, status: "Pending", method: "-" },
-      { id: "h3", date: "2024-03-01", type: "Payment", description: "Cash Payment", amount: 500, status: "Completed", method: "Cash" },
-    ]
-  },
-  { id: "2", name: "Priya Patel", mobile: "9876543211", email: "priya@example.com", address: "Ahmedabad", bills: 5, totalSpent: 1200, totalPaid: 1200, outstanding: 0, lastVisit: "2024-03-12" },
-  { id: "3", name: "Amit Kumar", mobile: "9876543212", email: "amit@example.com", address: "Mumbai", bills: 8, totalSpent: 2800, totalPaid: 2500, outstanding: 300, lastVisit: "2024-03-14" },
-];
+interface Customer {
+  id: string;
+  name: string;
+  mobile: string;
+  email?: string;
+  address?: string;
+  outstanding: number;
+  totalSpent: number;
+  billsCount: number;
+  history?: any[];
+}
 
 export default function Customers() {
+  const [customers, setCustomers] = useState<Customer[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
+  const [showAddDialog, setShowAddDialog] = useState(false);
+  const [newCustomer, setNewCustomer] = useState({
+    name: "",
+    mobile: "",
+    email: "",
+    address: ""
+  });
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    const q = query(collection(db, "customers"), orderBy("createdAt", "desc"));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const customerData = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      })) as Customer[];
+      setCustomers(customerData);
+    }, (error) => {
+      console.error("Firestore Error:", error);
+      toast.error("Failed to load customers");
+    });
+    return () => unsubscribe();
+  }, []);
 
   const selectedCustomer = useMemo(() => 
-    mockCustomers.find(c => c.id === selectedCustomerId),
-    [selectedCustomerId]
+    customers.find(c => c.id === selectedCustomerId),
+    [selectedCustomerId, customers]
   );
 
-  const filteredCustomers = mockCustomers.filter(customer => 
+  const filteredCustomers = customers.filter(customer => 
     customer.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     customer.mobile.includes(searchTerm)
   );
+
+  const handleAddCustomer = async () => {
+    if (!newCustomer.name || !newCustomer.mobile) {
+      toast.error("Name and Mobile are required");
+      return;
+    }
+    setIsSubmitting(true);
+    try {
+      await addDoc(collection(db, "customers"), {
+        ...newCustomer,
+        outstanding: 0,
+        totalSpent: 0,
+        totalPaid: 0,
+        billsCount: 0,
+        createdAt: serverTimestamp(),
+      });
+      toast.success("Customer added successfully");
+      setShowAddDialog(false);
+      setNewCustomer({ name: "", mobile: "", email: "", address: "" });
+    } catch (error) {
+      console.error("Error adding customer:", error);
+      toast.error("Failed to add customer");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleDeleteCustomer = async (id: string) => {
+    if (!confirm("Are you sure you want to delete this customer?")) return;
+    try {
+      await deleteDoc(doc(db, "customers", id));
+      toast.success("Customer deleted");
+    } catch (error) {
+      toast.error("Failed to delete customer");
+    }
+  };
 
   if (selectedCustomerId && selectedCustomer) {
     return (
@@ -252,7 +322,7 @@ export default function Customers() {
           <h1 className="text-2xl font-bold text-gray-900">Customers</h1>
           <p className="text-gray-500">Manage your customer database and history.</p>
         </div>
-        <Button className="bg-blue-600 hover:bg-blue-700">
+        <Button className="bg-blue-600 hover:bg-blue-700" onClick={() => setShowAddDialog(true)}>
           <Plus className="w-4 h-4 mr-2" />
           Add New Customer
         </Button>
@@ -330,9 +400,11 @@ export default function Customers() {
                     </TableCell>
                     <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
                       <DropdownMenu>
-                        <DropdownMenuTrigger render={<Button variant="ghost" size="icon" className="h-8 w-8" />}>
-                          <MoreHorizontal className="w-4 h-4" />
-                        </DropdownMenuTrigger>
+                        <DropdownMenuTrigger render={
+                          <Button variant="ghost" size="icon" className="h-8 w-8">
+                            <MoreHorizontal className="w-4 h-4" />
+                          </Button>
+                        } />
                         <DropdownMenuContent align="end" className="w-48">
                           <DropdownMenuLabel>Actions</DropdownMenuLabel>
                           <DropdownMenuSeparator />
@@ -349,7 +421,10 @@ export default function Customers() {
                             Create New Bill
                           </DropdownMenuItem>
                           <DropdownMenuSeparator />
-                          <DropdownMenuItem className="text-red-600">Delete Customer</DropdownMenuItem>
+                          <DropdownMenuItem className="text-red-600" onClick={() => handleDeleteCustomer(customer.id)}>
+                            <Trash2 className="w-4 h-4 mr-2" />
+                            Delete Customer
+                          </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </TableCell>
@@ -360,6 +435,62 @@ export default function Customers() {
           </div>
         </CardContent>
       </Card>
+
+      <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Add New Customer</DialogTitle>
+            <DialogDescription>
+              Enter the customer details below. Name and Mobile are required.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label htmlFor="name">Full Name</Label>
+              <Input 
+                id="name" 
+                placeholder="John Doe" 
+                value={newCustomer.name}
+                onChange={(e) => setNewCustomer({...newCustomer, name: e.target.value})}
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="mobile">Mobile Number</Label>
+              <Input 
+                id="mobile" 
+                placeholder="9876543210" 
+                value={newCustomer.mobile}
+                onChange={(e) => setNewCustomer({...newCustomer, mobile: e.target.value})}
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="email">Email (Optional)</Label>
+              <Input 
+                id="email" 
+                type="email" 
+                placeholder="john@example.com" 
+                value={newCustomer.email}
+                onChange={(e) => setNewCustomer({...newCustomer, email: e.target.value})}
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="address">Address (Optional)</Label>
+              <Input 
+                id="address" 
+                placeholder="City, State" 
+                value={newCustomer.address}
+                onChange={(e) => setNewCustomer({...newCustomer, address: e.target.value})}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowAddDialog(false)}>Cancel</Button>
+            <Button className="bg-blue-600" onClick={handleAddCustomer} disabled={isSubmitting}>
+              {isSubmitting ? "Adding..." : "Add Customer"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

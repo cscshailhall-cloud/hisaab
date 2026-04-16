@@ -1,127 +1,90 @@
 {
   "entities": {
-    "UserProfile": {
-      "title": "User Profile",
-      "description": "Staff or Admin profile information",
-      "type": "object",
-      "properties": {
-        "uid": { "type": "string" },
-        "email": { "type": "string", "format": "email" },
-        "displayName": { "type": "string" },
-        "role": { "type": "string", "enum": ["admin", "staff"] },
-        "branchId": { "type": "string" },
-        "createdAt": { "type": "string", "format": "date-time" }
-      },
-      "required": ["uid", "email", "role"]
-    },
     "Customer": {
       "title": "Customer",
-      "description": "Customer information",
+      "description": "A customer of the CSC center",
       "type": "object",
       "properties": {
-        "id": { "type": "string" },
-        "name": { "type": "string" },
-        "mobile": { "type": "string" },
-        "alternateMobile": { "type": "string" },
-        "address": { "type": "string" },
-        "aadhaar": { "type": "string" },
-        "pan": { "type": "string" },
-        "email": { "type": "string", "format": "email" },
-        "notes": { "type": "string" },
-        "createdAt": { "type": "string", "format": "date-time" },
-        "updatedAt": { "type": "string", "format": "date-time" }
+        "name": { "type": "string", "description": "Full name of the customer" },
+        "mobile": { "type": "string", "description": "Mobile number for WhatsApp and contact" },
+        "email": { "type": "string", "description": "Email address" },
+        "address": { "type": "string", "description": "Physical address" },
+        "outstanding": { "type": "number", "description": "Total unpaid balance" },
+        "totalSpent": { "type": "number", "description": "Total amount invoiced" },
+        "totalPaid": { "type": "number", "description": "Total amount paid" },
+        "billsCount": { "type": "number", "description": "Number of invoices generated" },
+        "lastVisit": { "type": "string", "format": "date-time", "description": "Last time the customer visited" },
+        "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["name", "mobile"]
     },
-    "Service": {
-      "title": "Service",
-      "description": "Service offered by the center",
+    "Invoice": {
+      "title": "Invoice",
+      "description": "An invoice generated for a customer",
       "type": "object",
       "properties": {
-        "id": { "type": "string" },
-        "name": { "type": "string" },
-        "category": { "type": "string" },
-        "price": { "type": "number" },
-        "commission": { "type": "number" },
-        "tax": { "type": "number" },
-        "turnaroundTime": { "type": "string" },
-        "description": { "type": "string" },
-        "status": { "type": "string", "enum": ["active", "inactive"] }
-      },
-      "required": ["name", "category", "price"]
-    },
-    "Bill": {
-      "title": "Bill",
-      "description": "Billing information",
-      "type": "object",
-      "properties": {
-        "id": { "type": "string" },
-        "billNumber": { "type": "string" },
-        "customerId": { "type": "string" },
-        "customerName": { "type": "string" },
-        "services": {
+        "invoiceNo": { "type": "string", "description": "Unique invoice number" },
+        "customerId": { "type": "string", "description": "ID of the customer" },
+        "customerName": { "type": "string", "description": "Name of the customer at time of billing" },
+        "date": { "type": "string", "format": "date-time" },
+        "amount": { "type": "number" },
+        "status": { "type": "string", "enum": ["Paid", "Pending", "Overdue"] },
+        "method": { "type": "string", "description": "Payment method (Cash, UPI, Card, etc.)" },
+        "items": {
           "type": "array",
           "items": {
             "type": "object",
             "properties": {
-              "serviceId": { "type": "string" },
-              "serviceName": { "type": "string" },
+              "name": { "type": "string" },
               "price": { "type": "number" },
               "quantity": { "type": "number" },
               "tax": { "type": "number" }
             }
           }
         },
-        "totalAmount": { "type": "number" },
         "discount": { "type": "number" },
         "taxAmount": { "type": "number" },
-        "payableAmount": { "type": "number" },
-        "paidAmount": { "type": "number" },
-        "dueAmount": { "type": "number" },
-        "paymentStatus": { "type": "string", "enum": ["paid", "partial", "unpaid"] },
-        "paymentMethod": { "type": "string" },
-        "branchId": { "type": "string" },
-        "staffId": { "type": "string" },
+        "subtotal": { "type": "number" },
+        "notes": { "type": "string" },
         "createdAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["billNumber", "customerId", "totalAmount", "payableAmount"]
+      "required": ["invoiceNo", "customerId", "amount", "status"]
     },
-    "Expense": {
-      "title": "Expense",
-      "description": "Expense tracking",
+    "Service": {
+      "title": "Service",
+      "description": "A service offered by the CSC center",
       "type": "object",
       "properties": {
-        "id": { "type": "string" },
-        "category": { "type": "string" },
-        "amount": { "type": "number" },
-        "description": { "type": "string" },
-        "date": { "type": "string", "format": "date" },
-        "branchId": { "type": "string" },
-        "staffId": { "type": "string" }
-      },
-      "required": ["category", "amount", "date"]
-    },
-    "InventoryItem": {
-      "title": "Inventory Item",
-      "description": "Inventory tracking",
-      "type": "object",
-      "properties": {
-        "id": { "type": "string" },
         "name": { "type": "string" },
-        "quantity": { "type": "number" },
-        "unit": { "type": "string" },
-        "lowStockThreshold": { "type": "number" },
-        "branchId": { "type": "string" }
+        "price": { "type": "number" },
+        "category": { "type": "string" },
+        "description": { "type": "string" }
       },
-      "required": ["name", "quantity"]
+      "required": ["name", "price"]
+    },
+    "Settings": {
+      "title": "Settings",
+      "description": "Application settings and business profile",
+      "type": "object",
+      "properties": {
+        "businessName": { "type": "string" },
+        "businessAddress": { "type": "string" },
+        "businessMobile": { "type": "string" },
+        "businessEmail": { "type": "string" },
+        "bankName": { "type": "string" },
+        "accountNumber": { "type": "string" },
+        "ifscCode": { "type": "string" },
+        "accountHolder": { "type": "string" },
+        "terms": { "type": "string" },
+        "defaultTemplate": { "type": "string" },
+        "accentColor": { "type": "string" }
+      }
     }
   },
   "firestore": {
-    "/users/{uid}": { "schema": "UserProfile", "description": "User profiles" },
-    "/customers/{customerId}": { "schema": "Customer", "description": "Customer records" },
-    "/services/{serviceId}": { "schema": "Service", "description": "Available services" },
-    "/bills/{billId}": { "schema": "Bill", "description": "Billing records" },
-    "/expenses/{expenseId}": { "schema": "Expense", "description": "Expense records" },
-    "/inventory/{itemId}": { "schema": "InventoryItem", "description": "Inventory records" }
+    "/customers": { "schema": "Customer", "description": "Collection of customers" },
+    "/invoices": { "schema": "Invoice", "description": "Collection of invoices" },
+    "/services": { "schema": "Service", "description": "Collection of services" },
+    "/settings/global": { "schema": "Settings", "description": "Global application settings" }
   }
 }

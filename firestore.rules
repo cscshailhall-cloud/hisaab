@@ -1,110 +1,147 @@
+// ===============================================================
+// Assumed Data Model
+// ===============================================================
+//
+// Collection: customers
+// Fields:
+//   - name: string (required)
+//   - mobile: string (required)
+//   - email: string (optional)
+//   - address: string (optional)
+//   - outstanding: number
+//   - totalSpent: number
+//   - totalPaid: number
+//   - billsCount: number
+//   - lastVisit: string (date-time)
+//   - createdAt: string (date-time)
+//
+// Collection: invoices
+// Fields:
+//   - invoiceNo: string (required)
+//   - customerId: string (required)
+//   - customerName: string
+//   - date: string (date-time)
+//   - amount: number (required)
+//   - status: string (Paid, Pending, Overdue)
+//   - method: string
+//   - items: list of maps
+//   - discount: number
+//   - taxAmount: number
+//   - subtotal: number
+//   - notes: string
+//   - createdAt: string (date-time)
+//
+// Collection: services
+// Fields:
+//   - name: string (required)
+//   - price: number (required)
+//   - category: string
+//   - description: string
+//
+// Collection: settings
+// Document: global
+// Fields:
+//   - businessName: string
+//   - businessAddress: string
+//   - businessMobile: string
+//   - businessEmail: string
+//   - bankName: string
+//   - accountNumber: string
+//   - ifscCode: string
+//   - accountHolder: string
+//   - terms: string
+//   - defaultTemplate: string
+//   - accentColor: string
+//
+// ===============================================================
+
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // ===============================================================
-    // Assumed Data Model
-    // ===============================================================
-    //
-    // Collection: users
-    // Document ID: {uid}
-    // Fields:
-    //   - name: string (required)
-    //   - email: string (required)
-    //   - role: string (required, ['admin', 'staff'])
-    //   - createdAt: timestamp (required)
-    //
-    // Collection: customers
-    // Document ID: {customerId}
-    // Fields:
-    //   - name: string (required)
-    //   - phone: string (required)
-    //   - email: string (optional)
-    //   - address: string (optional)
-    //   - createdAt: timestamp (required)
-    //   - createdBy: string (uid)
-    //
-    // Collection: bills
-    // Document ID: {billId}
-    // Fields:
-    //   - customerId: string (required)
-    //   - services: list (required)
-    //   - total: number (required)
-    //   - status: string (required, ['paid', 'pending'])
-    //   - createdAt: timestamp (required)
-    //   - createdBy: string (uid)
-    //
-    // ===============================================================
 
+    // ===============================================================
     // Helper Functions
+    // ===============================================================
+    
     function isAuthenticated() {
       return request.auth != null;
     }
 
-    function isOwner(userId) {
-      return isAuthenticated() && request.auth.uid == userId;
-    }
-
     function isAdmin() {
       return isAuthenticated() && 
-        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
-         (request.auth.token.email == "cscshailhall@gmail.com" && request.auth.token.email_verified == true));
+        (request.auth.token.email == "cscshailhall@gmail.com" && request.auth.token.email_verified == true);
     }
 
-    function isStaff() {
-      return isAuthenticated() && 
-        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'staff' || isAdmin());
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
     }
 
-    // Validation Functions
-    function isValidUser(data) {
-      return data.keys().hasAll(['name', 'email', 'role', 'createdAt']) &&
-             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
-             data.email is string && data.email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$") &&
-             data.role in ['admin', 'staff'];
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
     }
+
+    function isValidDateString(dateStr) {
+      return dateStr is string && dateStr.matches("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}.*Z?$");
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
 
     function isValidCustomer(data) {
-      return data.keys().hasAll(['name', 'phone', 'createdAt', 'createdBy']) &&
-             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
-             data.phone is string && data.phone.size() >= 10 && data.phone.size() <= 15;
+      return data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             data.mobile is string && data.mobile.size() >= 10 && data.mobile.size() <= 15 &&
+             (!('email' in data) || isValidEmail(data.email)) &&
+             (!('outstanding' in data) || data.outstanding is number) &&
+             (!('totalSpent' in data) || data.totalSpent is number) &&
+             (!('totalPaid' in data) || data.totalPaid is number) &&
+             (!('billsCount' in data) || data.billsCount is int);
     }
 
+    function isValidInvoice(data) {
+      return data.invoiceNo is string && data.invoiceNo.size() > 0 &&
+             data.customerId is string && data.customerId.size() > 0 &&
+             data.amount is number && data.amount >= 0 &&
+             data.status in ['Paid', 'Pending', 'Overdue'] &&
+             (!('date' in data) || isValidDateString(data.date));
+    }
+
+    function isValidService(data) {
+      return data.name is string && data.name.size() > 0 &&
+             data.price is number && data.price >= 0;
+    }
+
+    // ===============================================================
     // Rules
-    match /users/{userId} {
-      allow read: if isOwner(userId) || isAdmin();
-      allow create: if isAuthenticated() && isValidUser(request.resource.data) && 
-                    (isOwner(userId) && (request.resource.data.role == 'staff' || isAdmin()));
-      allow update: if isAuthenticated() && isValidUser(request.resource.data) && 
-                    (isAdmin() || (isOwner(userId) && request.resource.data.role == resource.data.role));
+    // ===============================================================
+
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
     }
 
     match /customers/{customerId} {
-      allow read: if isStaff();
-      allow create: if isStaff() && isValidCustomer(request.resource.data);
-      allow update: if isStaff() && isValidCustomer(request.resource.data);
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidCustomer(request.resource.data);
+      allow update: if isAuthenticated() && isValidCustomer(request.resource.data);
       allow delete: if isAdmin();
     }
 
-    match /bills/{billId} {
-      allow read: if isStaff();
-      allow create: if isStaff();
-      allow update: if isStaff();
+    match /invoices/{invoiceId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidInvoice(request.resource.data);
+      allow update: if isAuthenticated() && isValidInvoice(request.resource.data);
       allow delete: if isAdmin();
     }
 
     match /services/{serviceId} {
-      allow read: if isStaff();
+      allow read: if isAuthenticated();
+      allow write: if isAdmin() && isValidService(request.resource.data);
+    }
+
+    match /settings/{settingId} {
+      allow read: if isAuthenticated();
       allow write: if isAdmin();
-    }
-
-    match /expenses/{expenseId} {
-      allow read: if isStaff();
-      allow write: if isStaff();
-    }
-
-    match /inventory/{itemId} {
-      allow read: if isStaff();
-      allow write: if isStaff();
     }
   }
 }
