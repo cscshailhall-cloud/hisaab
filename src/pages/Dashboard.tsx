@@ -112,8 +112,8 @@ export default function Dashboard() {
             </button>
           </CardHeader>
           <CardContent>
-            <div className="h-[300px] w-full">
-              <ResponsiveContainer width="100%" height="100%">
+            <div className="h-[300px] w-full min-h-[300px]">
+              <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={300}>
                 <AreaChart data={data}>
                   <defs>
                     <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">

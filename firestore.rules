@@ -95,7 +95,8 @@ service cloud.firestore {
              (!('outstanding' in data) || data.outstanding is number) &&
              (!('totalSpent' in data) || data.totalSpent is number) &&
              (!('totalPaid' in data) || data.totalPaid is number) &&
-             (!('billsCount' in data) || data.billsCount is int);
+             (!('billsCount' in data) || data.billsCount is number) &&
+             (!('createdAt' in data) || data.createdAt is timestamp);
     }
 
     function isValidInvoice(data) {
@@ -103,7 +104,8 @@ service cloud.firestore {
              data.customerId is string && data.customerId.size() > 0 &&
              data.amount is number && data.amount >= 0 &&
              data.status in ['Paid', 'Pending', 'Overdue'] &&
-             (!('date' in data) || isValidDateString(data.date));
+             (!('date' in data) || isValidDateString(data.date)) &&
+             (!('createdAt' in data) || data.createdAt is timestamp);
     }
 
     function isValidService(data) {
