@@ -77,6 +77,7 @@ export default function Customers() {
     address: ""
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [customerHistory, setCustomerHistory] = useState<any[]>([]);
 
   useEffect(() => {
     const fetchCustomers = async () => {
@@ -106,6 +107,34 @@ export default function Customers() {
       supabase.removeChannel(channel);
     };
   }, []);
+
+  useEffect(() => {
+    if (!selectedCustomerId) {
+      setCustomerHistory([]);
+      return;
+    }
+
+    const fetchHistory = async () => {
+      const { data, error } = await supabase
+        .from("invoices")
+        .select("*")
+        .eq("customer_id", selectedCustomerId)
+        .order("date", { ascending: false });
+      
+      if (!error) {
+        setCustomerHistory(data.map(inv => ({
+          id: inv.id,
+          date: new Date(inv.date).toLocaleDateString(),
+          type: "Bill",
+          description: `Invoice ${inv.invoice_no}`,
+          amount: inv.amount,
+          status: inv.status
+        })));
+      }
+    };
+
+    fetchHistory();
+  }, [selectedCustomerId]);
 
   const selectedCustomer = useMemo(() => 
     customers.find(c => c.id === selectedCustomerId),
@@ -240,7 +269,7 @@ export default function Customers() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {selectedCustomer.history?.map((item) => (
+                      {customerHistory.map((item) => (
                         <TableRow key={item.id}>
                           <TableCell className="text-xs">{item.date}</TableCell>
                           <TableCell>
@@ -418,7 +447,9 @@ export default function Customers() {
                           </Button>
                         } />
                         <DropdownMenuContent align="end" className="w-48">
-                          <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                          <DropdownMenuGroup>
+                            <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                          </DropdownMenuGroup>
                           <DropdownMenuSeparator />
                           <DropdownMenuItem onClick={() => setSelectedCustomerId(customer.id)}>
                             <FileText className="w-4 h-4 mr-2" />

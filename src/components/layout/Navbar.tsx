@@ -10,11 +10,21 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useAuth } from "@/context/AuthContext";
-import { logout } from "@/lib/firebase";
+import { supabase } from "@/lib/supabase";
+import { toast } from "sonner";
 
 export function Navbar() {
   const { user, profile } = useAuth();
-  const displayName = profile?.full_name || user?.displayName || "Admin User";
+  const displayName = profile?.full_name || user?.user_metadata?.full_name || "Admin User";
+
+  const handleLogout = async () => {
+    const { error } = await supabase.auth.signOut();
+    if (error) {
+      toast.error("Logout failed", { description: error.message });
+    } else {
+      toast.success("Signed out successfully");
+    }
+  };
 
   return (
     <header className="h-16 bg-white border-bottom border-gray-200 flex items-center justify-between px-8 sticky top-0 z-10">
@@ -41,7 +51,7 @@ export function Navbar() {
               <span className="block text-xs text-gray-500">{user?.email}</span>
             </span>
             <Avatar className="w-9 h-9 border border-gray-200">
-              <AvatarImage src={profile?.avatar_url || user?.photoURL || ""} />
+              <AvatarImage src={profile?.avatar_url || user?.user_metadata?.avatar_url || ""} />
               <AvatarFallback className="bg-blue-100 text-blue-700 font-medium">
                 {displayName?.split(' ').map((n: string) => n[0]).join('') || "AD"}
               </AvatarFallback>
@@ -54,7 +64,7 @@ export function Navbar() {
             <DropdownMenuItem>Branch Details</DropdownMenuItem>
             <DropdownMenuItem>Support</DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem className="text-red-600" onClick={() => logout()}>Logout</DropdownMenuItem>
+            <DropdownMenuItem className="text-red-600" onClick={handleLogout}>Logout</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>

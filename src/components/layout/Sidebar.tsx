@@ -15,7 +15,8 @@ import {
   FileText
 } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
-import { logout } from "@/lib/firebase";
+import { supabase } from "@/lib/supabase";
+import { toast } from "sonner";
 
 const menuItems = [
   { icon: LayoutDashboard, label: "Dashboard", path: "/" },
@@ -69,7 +70,10 @@ export function Sidebar() {
 
       <div className="p-4 border-t border-gray-200">
         <button 
-          onClick={() => logout()}
+          onClick={async () => {
+            const { error } = await supabase.auth.signOut();
+            if (error) toast.error("Logout failed");
+          }}
           className="flex items-center gap-3 px-3 py-2 w-full rounded-lg text-sm font-medium text-red-600 hover:bg-red-50 transition-colors"
         >
           <LogOut className="w-5 h-5" />

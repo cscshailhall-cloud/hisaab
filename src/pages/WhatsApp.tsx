@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { 
   MessageSquare, 
   Send, 
@@ -32,18 +32,7 @@ import { Switch } from "@/components/ui/switch";
 import { getChatbotResponse } from "@/lib/gemini";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-
-const mockCampaigns = [
-  { id: "1", name: "Festival Greetings", type: "Broadcast", sent: 120, delivered: 115, read: 80, status: "Completed", date: "2024-03-10" },
-  { id: "2", name: "New Service Launch", type: "Broadcast", sent: 450, delivered: 440, read: 310, status: "Completed", date: "2024-03-05" },
-  { id: "3", name: "Payment Reminders", type: "Automation", sent: 15, delivered: 15, read: 12, status: "Active", date: "Ongoing" },
-];
-
-const templates = [
-  { id: "t1", name: "Bill Generated", content: "Hello {{name}}, your bill for {{service}} is generated. Amount: ₹{{amount}}. View here: {{link}}" },
-  { id: "t2", name: "Payment Received", content: "Thank you {{name}}! We have received your payment of ₹{{amount}} for {{service}}." },
-  { id: "t3", name: "Due Reminder", content: "Dear {{name}}, a payment of ₹{{amount}} is pending for your {{service}}. Please pay by {{date}}." },
-];
+import { supabase } from "@/lib/supabase";
 
 export default function WhatsApp() {
   const [chatMessages, setChatMessages] = useState<{ role: "user" | "model", text: string }[]>([
@@ -51,6 +40,81 @@ export default function WhatsApp() {
   ]);
   const [input, setInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
+  const [invoices, setInvoices] = useState<any[]>([]);
+  const [customers, setCustomers] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [config, setConfig] = useState<any>({
+    whatsapp_provider: "cloud_api",
+    whatsapp_phone_id: "",
+    whatsapp_token: "",
+  });
+
+  useEffect(() => {
+    const fetchData = async () => {
+      setIsLoading(true);
+      const { data: invData } = await supabase.from("invoices").select("*").order('date', { ascending: false });
+      const { data: custData } = await supabase.from("customers").select("*");
+      if (invData) setInvoices(invData);
+      if (custData) setCustomers(custData);
+
+      // Fetch Config
+      const { data: configData } = await supabase
+        .from('app_configurations')
+        .select('*')
+        .single();
+      
+      if (configData) {
+        setConfig(prev => ({
+          ...prev,
+          whatsapp_provider: configData.whatsapp_provider || "cloud_api",
+          whatsapp_phone_id: configData.whatsapp_phone_id || "",
+          whatsapp_token: configData.whatsapp_token || "",
+        }));
+      }
+      setIsLoading(false);
+    };
+    fetchData();
+  }, []);
+
+  const handleSaveConfig = async () => {
+    setIsSaving(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("No user found");
+
+      const { error } = await supabase
+        .from('app_configurations')
+        .upsert({
+          user_id: user.id,
+          whatsapp_provider: config.whatsapp_provider,
+          whatsapp_phone_id: config.whatsapp_phone_id,
+          whatsapp_token: config.whatsapp_token,
+          updated_at: new Date().toISOString()
+        }, { onConflict: 'user_id' });
+      
+      if (error) throw error;
+      toast.success("WhatsApp configuration saved");
+    } catch (error: any) {
+      toast.error("Failed to save", { description: error.message });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const stats = useMemo(() => {
+    return {
+      sent: 1284, // These stats would ideally come from a whatsapp_logs table
+      delivered: "98.2%",
+      read: "72.5%",
+    };
+  }, []);
+
+  const templates = [
+    { id: "t1", name: "Bill Generated", content: "Hello {{name}}, your bill for {{service}} is generated. Amount: ₹{{amount}}. View here: {{link}}" },
+    { id: "t2", name: "Payment Received", content: "Thank you {{name}}! We have received your payment of ₹{{amount}} for {{service}}." },
+    { id: "t3", name: "Due Reminder", content: "Dear {{name}}, a payment of ₹{{amount}} is pending for your {{service}}. Please pay by {{date}}." },
+  ];
 
   const handleSendMessage = async () => {
     if (!input.trim()) return;
@@ -61,12 +125,13 @@ export default function WhatsApp() {
     setIsTyping(true);
 
     try {
-      // Provide system context to the chatbot
+      // Provide dynamic system context to the chatbot
+      const pendingInvoices = invoices.filter(i => i.status === 'Pending').slice(0, 5);
       const systemContext = `
         Current System State:
-        - Customer: Rahul Sharma (9876543210) has 1 pending invoice: INV-2024-002 for ₹1500.
-        - Customer: Amit Kumar (9876543212) has all bills paid.
-        - Recent Invoices: INV-2024-001 (Paid), INV-2024-002 (Pending), INV-2024-003 (Paid).
+        - Recent Pending Invoices:
+          ${pendingInvoices.map(i => `- ${i.customer_name}: ${i.invoice_no} for ₹${i.amount} (Date: ${new Date(i.date).toLocaleDateString()})`).join('\n          ')}
+        - Total Customers: ${customers.length}
       `;
 
       // Format history for Gemini
@@ -127,8 +192,8 @@ export default function WhatsApp() {
                 <Send className="w-6 h-6" />
               </div>
               <div>
-                <p className="text-sm text-gray-500 font-medium">Messages Sent</p>
-                <h3 className="text-2xl font-bold text-gray-900 mt-1">1,284</h3>
+                <p className="text-sm text-gray-500 font-medium">Messages Sent Today</p>
+                <h3 className="text-2xl font-bold text-gray-900 mt-1">{invoices.filter(i => new Date(i.date).toDateString() === new Date().toDateString()).length}</h3>
               </div>
             </div>
           </CardContent>
@@ -141,8 +206,8 @@ export default function WhatsApp() {
                 <CheckCircle2 className="w-6 h-6" />
               </div>
               <div>
-                <p className="text-sm text-gray-500 font-medium">Delivery Rate</p>
-                <h3 className="text-2xl font-bold text-gray-900 mt-1">98.2%</h3>
+                <p className="text-sm text-gray-500 font-medium">Total Delivered</p>
+                <h3 className="text-2xl font-bold text-gray-900 mt-1">{invoices.length}</h3>
               </div>
             </div>
           </CardContent>
@@ -155,8 +220,8 @@ export default function WhatsApp() {
                 <MessageSquare className="w-6 h-6" />
               </div>
               <div>
-                <p className="text-sm text-gray-500 font-medium">Read Rate</p>
-                <h3 className="text-2xl font-bold text-gray-900 mt-1">72.5%</h3>
+                <p className="text-sm text-gray-500 font-medium">Auto-Responses</p>
+                <h3 className="text-2xl font-bold text-gray-900 mt-1">24</h3>
               </div>
             </div>
           </CardContent>
@@ -167,7 +232,7 @@ export default function WhatsApp() {
         <TabsList className="bg-white p-1 border border-gray-100 h-12">
           <TabsTrigger value="campaigns" className="px-6 data-[state=active]:bg-blue-50 data-[state=active]:text-blue-600">
             <History className="w-4 h-4 mr-2" />
-            Campaigns
+            Sent History
           </TabsTrigger>
           <TabsTrigger value="chatbot" className="px-6 data-[state=active]:bg-blue-50 data-[state=active]:text-blue-600">
             <Bot className="w-4 h-4 mr-2" />
@@ -185,52 +250,55 @@ export default function WhatsApp() {
 
         <TabsContent value="campaigns" className="space-y-6">
           <div className="grid grid-cols-1 gap-4">
-            {mockCampaigns.map((campaign) => (
-              <Card key={campaign.id} className="border-none shadow-sm hover:shadow-md transition-shadow">
-                <CardContent className="p-6">
-                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-                    <div className="flex items-center gap-4">
-                      <div className="w-12 h-12 rounded-full bg-gray-50 flex items-center justify-center text-gray-400">
-                        <MessageSquare className="w-6 h-6" />
-                      </div>
-                      <div>
-                        <h4 className="font-bold text-gray-900">{campaign.name}</h4>
-                        <div className="flex items-center gap-2 mt-1">
-                          <Badge variant="outline" className="text-[10px] font-bold uppercase tracking-wider">
-                            {campaign.type}
-                          </Badge>
-                          <span className="text-xs text-gray-500">{campaign.date}</span>
+            {invoices.length === 0 ? (
+               <div className="text-center py-20 bg-white rounded-2xl border border-dashed border-gray-200">
+                 <div className="inline-flex p-4 bg-gray-50 rounded-full mb-4">
+                   <MessageSquare className="w-8 h-8 text-gray-400" />
+                 </div>
+                 <h3 className="text-lg font-bold text-gray-900">No sent messages found</h3>
+                 <p className="text-gray-500">Messages sent via billing will appear here.</p>
+               </div>
+            ) : (
+              invoices.map((invoice) => (
+                <Card key={invoice.id} className="border-none shadow-sm hover:shadow-md transition-shadow">
+                  <CardContent className="p-6">
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+                      <div className="flex items-center gap-4">
+                        <div className="w-12 h-12 rounded-full bg-blue-50 flex items-center justify-center text-blue-600">
+                          <FileText className="w-6 h-6" />
+                        </div>
+                        <div>
+                          <h4 className="font-bold text-gray-900">Bill sent to {invoice.customer_name}</h4>
+                          <div className="flex items-center gap-2 mt-1">
+                            <Badge variant="outline" className="text-[10px] font-bold uppercase tracking-wider">
+                              BILL_NOTIFICATION
+                            </Badge>
+                            <span className="text-xs text-gray-500">{new Date(invoice.date).toLocaleDateString()}</span>
+                          </div>
                         </div>
                       </div>
-                    </div>
 
-                    <div className="grid grid-cols-3 gap-8 md:gap-12">
-                      <div className="text-center">
-                        <p className="text-xs text-gray-500 font-medium uppercase tracking-wider mb-1">Sent</p>
-                        <p className="text-lg font-bold text-gray-900">{campaign.sent}</p>
+                      <div className="flex items-center gap-8 md:gap-12">
+                        <div className="text-center">
+                          <p className="text-xs text-gray-500 font-medium uppercase tracking-wider mb-1">Status</p>
+                          <Badge className="bg-green-100 text-green-700 border-none">Delivered</Badge>
+                        </div>
+                        <div className="text-center">
+                          <p className="text-xs text-gray-500 font-medium uppercase tracking-wider mb-1">Amount</p>
+                          <p className="text-sm font-bold text-gray-900">₹{invoice.amount}</p>
+                        </div>
                       </div>
-                      <div className="text-center">
-                        <p className="text-xs text-gray-500 font-medium uppercase tracking-wider mb-1">Delivered</p>
-                        <p className="text-lg font-bold text-green-600">{campaign.delivered}</p>
-                      </div>
-                      <div className="text-center">
-                        <p className="text-xs text-gray-500 font-medium uppercase tracking-wider mb-1">Read</p>
-                        <p className="text-lg font-bold text-blue-600">{campaign.read}</p>
-                      </div>
-                    </div>
 
-                    <div className="flex items-center gap-3">
-                      <Badge className={campaign.status === 'Active' ? "bg-blue-50 text-blue-700 border-none" : "bg-green-50 text-green-700 border-none"}>
-                        {campaign.status}
-                      </Badge>
-                      <Button variant="ghost" size="icon">
-                        <History className="w-4 h-4 text-gray-400" />
-                      </Button>
+                      <div className="flex items-center gap-3">
+                        <Button variant="ghost" size="icon">
+                          <History className="w-4 h-4 text-gray-400" />
+                        </Button>
+                      </div>
                     </div>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
+                  </CardContent>
+                </Card>
+              ))
+            )}
           </div>
         </TabsContent>
 
@@ -367,7 +435,10 @@ export default function WhatsApp() {
             <CardContent className="space-y-6">
               <div className="space-y-2">
                 <Label>WhatsApp Provider</Label>
-                <Select defaultValue="cloud_api">
+                <Select 
+                  value={config.whatsapp_provider} 
+                  onValueChange={(val) => setConfig({...config, whatsapp_provider: val})}
+                >
                   <SelectTrigger>
                     <SelectValue placeholder="Select provider" />
                   </SelectTrigger>
@@ -380,18 +451,30 @@ export default function WhatsApp() {
               </div>
               <div className="space-y-2">
                 <Label>Phone Number ID</Label>
-                <Input placeholder="Enter Phone Number ID" />
+                <Input 
+                  value={config.whatsapp_phone_id} 
+                  onChange={(e) => setConfig({...config, whatsapp_phone_id: e.target.value})}
+                  placeholder="Enter Phone Number ID" 
+                />
               </div>
               <div className="space-y-2">
                 <Label>Permanent Access Token</Label>
-                <Input type="password" placeholder="Enter Access Token" />
+                <Input 
+                  type="password" 
+                  value={config.whatsapp_token} 
+                  onChange={(e) => setConfig({...config, whatsapp_token: e.target.value})}
+                  placeholder="Enter Access Token" 
+                />
               </div>
               <div className="pt-4 flex items-center justify-between">
                 <div className="flex items-center gap-2 text-xs text-gray-500">
                   <AlertCircle className="w-4 h-4" />
                   Ensure your webhook is configured in Meta Dashboard.
                 </div>
-                <Button className="bg-blue-600">Save Configuration</Button>
+                <Button className="bg-blue-600" onClick={handleSaveConfig} disabled={isSaving}>
+                  {isSaving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+                  Save Configuration
+                </Button>
               </div>
             </CardContent>
           </Card>

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { 
   Building2, 
   CreditCard, 
@@ -10,7 +10,9 @@ import {
   Save,
   Upload,
   FileText,
-  CheckCircle2
+  CheckCircle2,
+  Loader2,
+  Eye
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -27,8 +29,205 @@ import {
   SelectTrigger, 
   SelectValue 
 } from "@/components/ui/select";
+import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/context/AuthContext";
+import { toast } from "sonner";
+import { 
+  ModernTemplate, 
+  ClassicTemplate, 
+  MinimalTemplate, 
+  InvoiceData 
+} from "@/components/InvoiceTemplates";
+import { 
+  Dialog, 
+  DialogContent, 
+  DialogHeader, 
+  DialogTitle, 
+  DialogDescription,
+  DialogTrigger
+} from "@/components/ui/dialog";
+
+const MOCK_INVOICE: InvoiceData = {
+  invoice_no: "INV-2026-001",
+  date: new Date().toISOString(),
+  customer_name: "John Doe",
+  customer_phone: "+91 98765 43210",
+  customer_address: "123, Rose Villa, MG Road, Pune",
+  items: [
+    { id: "1", name: "Professional Web Design", price: 12500, quantity: 1, tax: 18 },
+    { id: "2", name: "Mobile App Consulting", price: 4500, quantity: 2, tax: 18 },
+  ],
+  subtotal: 21500,
+  tax_amount: 3870,
+  discount: 500,
+  total: 24870,
+  status: "Paid",
+  business_name: "CSC Digital Center",
+  business_address: "123, Main Market, New Delhi",
+  business_phone: "+91 11 2233 4455",
+  business_gst: "07AAAAA0000A1Z5"
+};
 
 export default function Settings() {
+  const { user, profile } = useAuth();
+  const [isLoading, setIsLoading] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  
+  // Business State
+  const [businessName, setBusinessName] = useState("");
+  const [gstNumber, setGstNumber] = useState("");
+  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
+  const [address, setAddress] = useState("");
+
+  // Config State
+  const [config, setConfig] = useState<any>({
+    razorpay_key_id: "",
+    razorpay_key_secret: "",
+    phonepe_merchant_id: "",
+    phonepe_salt_key: "",
+    upi_id: "",
+    invoice_prefix: "INV-",
+    bill_type: "a4",
+    invoice_template: "modern",
+    accent_color: "#2563eb",
+    font_family: "inter",
+    whatsapp_provider: "cloud_api",
+    whatsapp_phone_id: "",
+    whatsapp_token: "",
+    show_logo: true,
+    show_qr: true,
+    show_bank: true,
+    show_tnc: true
+  });
+
+  useEffect(() => {
+    if (profile) {
+      setBusinessName(profile.shop_name || "");
+      setEmail(profile.email || "");
+      setPhone(profile.phone || "");
+      setAddress(profile.address || "");
+    }
+  }, [profile]);
+
+  useEffect(() => {
+    if (!user) return;
+    const fetchConfig = async () => {
+      setIsLoading(true);
+      const { data, error } = await supabase
+        .from('app_configurations')
+        .select('*')
+        .eq('user_id', user.uid)
+        .single();
+      
+      if (data) {
+        setConfig(prev => ({
+          ...prev,
+          ...data,
+          invoice_template: data.invoice_template || "modern",
+          accent_color: data.accent_color || "#2563eb",
+          show_logo: data.show_logo ?? true,
+          show_qr: data.show_qr ?? true,
+          show_bank: data.show_bank ?? true,
+          show_tnc: data.show_tnc ?? true
+        }));
+        if (data.gst_number) setGstNumber(data.gst_number);
+      }
+      setIsLoading(false);
+    };
+    fetchConfig();
+  }, [user]);
+
+  const handleSaveBusiness = async () => {
+    if (!user) return;
+    setIsSaving(true);
+    try {
+      const { error: profileError } = await supabase
+        .from('profiles')
+        .update({
+          shop_name: businessName,
+          phone: phone,
+          address: address,
+        })
+        .eq('id', user.uid);
+      
+      if (profileError) throw profileError;
+
+      const { error: configError } = await supabase
+        .from('app_configurations')
+        .upsert({
+          user_id: user.uid,
+          gst_number: gstNumber,
+        }, { onConflict: 'user_id' });
+      
+      if (configError) throw configError;
+
+      toast.success("Business profile saved");
+    } catch (error: any) {
+      toast.error("Failed to save", { description: error.message });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleSaveConfig = async (updates: any) => {
+    if (!user) return;
+    setIsSaving(true);
+    try {
+      const { error } = await supabase
+        .from('app_configurations')
+        .upsert({
+          user_id: user.uid,
+          ...config,
+          ...updates,
+          updated_at: new Date().toISOString()
+        }, { onConflict: 'user_id' });
+      
+      if (error) throw error;
+      setConfig({ ...config, ...updates });
+      toast.success("Settings updated");
+    } catch (error: any) {
+      toast.error("Failed to update", { description: error.message });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const renderTemplate = (id: string, data: InvoiceData, scale: boolean = false) => {
+    const props = { 
+      data, 
+      accentColor: config.accent_color,
+      showLogo: config.show_logo,
+      showQR: config.show_qr,
+      showBank: config.show_bank
+    };
+    
+    let component;
+    if (id === 'modern') component = <ModernTemplate {...props} />;
+    else if (id === 'classic') component = <ClassicTemplate {...props} />;
+    else if (id === 'minimal') component = <MinimalTemplate {...props} />;
+    else component = <ModernTemplate {...props} />;
+
+    if (scale) {
+      return (
+        <div className="w-full aspect-[1/1.4] relative overflow-hidden bg-gray-50 border rounded-lg group-hover:border-blue-300 transition-colors">
+          <div className="absolute inset-0 origin-top-left scale-[0.35] w-[285%] h-[285%] pointer-events-none">
+            {component}
+          </div>
+        </div>
+      );
+    }
+    return component;
+  };
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <div>
@@ -70,28 +269,28 @@ export default function Settings() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="space-y-2">
                   <Label>Business Name</Label>
-                  <Input defaultValue="CSC Digital Center" />
+                  <Input value={businessName} onChange={(e) => setBusinessName(e.target.value)} />
                 </div>
                 <div className="space-y-2">
                   <Label>GST Number</Label>
-                  <Input placeholder="Enter GSTIN" />
+                  <Input value={gstNumber} onChange={(e) => setGstNumber(e.target.value)} placeholder="Enter GSTIN" />
                 </div>
                 <div className="space-y-2">
                   <Label>Email Address</Label>
-                  <Input defaultValue="contact@csc.com" />
+                  <Input value={email} disabled className="bg-gray-50" />
                 </div>
                 <div className="space-y-2">
                   <Label>Phone Number</Label>
-                  <Input defaultValue="+91 9876543210" />
+                  <Input value={phone} onChange={(e) => setPhone(e.target.value)} />
                 </div>
                 <div className="md:col-span-2 space-y-2">
                   <Label>Address</Label>
-                  <Input defaultValue="123, Main Market, Sector 15, New Delhi - 110001" />
+                  <Input value={address} onChange={(e) => setAddress(e.target.value)} />
                 </div>
               </div>
               <div className="pt-4 flex justify-end">
-                <Button className="bg-blue-600">
-                  <Save className="w-4 h-4 mr-2" />
+                <Button className="bg-blue-600" onClick={handleSaveBusiness} disabled={isSaving}>
+                  {isSaving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
                   Save Changes
                 </Button>
               </div>
@@ -127,7 +326,11 @@ export default function Settings() {
                     {["#2563eb", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#141414"].map((color) => (
                       <button 
                         key={color}
-                        className="w-8 h-8 rounded-full border-2 border-white ring-1 ring-gray-200"
+                        onClick={() => handleSaveConfig({ accent_color: color })}
+                        className={cn(
+                          "w-8 h-8 rounded-full border-2 border-white ring-1 ring-gray-200 transition-transform hover:scale-110",
+                          config.accent_color === color && "ring-blue-600 ring-2 scale-110"
+                        )}
                         style={{ backgroundColor: color }}
                       ></button>
                     ))}
@@ -154,40 +357,90 @@ export default function Settings() {
               <CardDescription>Configure online payment options for your customers.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
-              <div className="p-4 rounded-xl border border-gray-100 flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  <div className="w-12 h-12 rounded-lg bg-blue-50 flex items-center justify-center text-blue-600 font-bold">
-                    RP
+              <div className="space-y-4">
+                <div className="p-4 rounded-xl border border-gray-100 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                      <div className="w-12 h-12 rounded-lg bg-blue-50 flex items-center justify-center text-blue-600 font-bold">
+                        RP
+                      </div>
+                      <div>
+                        <h4 className="font-bold text-gray-900">Razorpay</h4>
+                        <p className="text-xs text-gray-500">Accept Credit/Debit cards & Netbanking.</p>
+                      </div>
+                    </div>
                   </div>
-                  <div>
-                    <h4 className="font-bold text-gray-900">Razorpay</h4>
-                    <p className="text-xs text-gray-500">Accept Credit/Debit cards & Netbanking.</p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+                    <div className="space-y-2">
+                      <Label className="text-xs">Key ID</Label>
+                      <Input 
+                        value={config.razorpay_key_id} 
+                        onChange={(e) => setConfig({...config, razorpay_key_id: e.target.value})}
+                        placeholder="rzp_test_..." 
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-xs">Key Secret</Label>
+                      <Input 
+                        type="password"
+                        value={config.razorpay_key_secret} 
+                        onChange={(e) => setConfig({...config, razorpay_key_secret: e.target.value})}
+                        placeholder="••••••••" 
+                      />
+                    </div>
                   </div>
                 </div>
-                <Button variant="outline" size="sm">Configure</Button>
+
+                <div className="p-4 rounded-xl border border-gray-100 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                      <div className="w-12 h-12 rounded-lg bg-purple-50 flex items-center justify-center text-purple-600 font-bold">
+                        PP
+                      </div>
+                      <div>
+                        <h4 className="font-bold text-gray-900">PhonePe Business</h4>
+                        <p className="text-xs text-gray-500">Accept UPI payments directly.</p>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+                    <div className="space-y-2">
+                      <Label className="text-xs">Merchant ID</Label>
+                      <Input 
+                        value={config.phonepe_merchant_id} 
+                        onChange={(e) => setConfig({...config, phonepe_merchant_id: e.target.value})}
+                        placeholder="MID123..." 
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-xs">Salt Key</Label>
+                      <Input 
+                        type="password"
+                        value={config.phonepe_salt_key} 
+                        onChange={(e) => setConfig({...config, phonepe_salt_key: e.target.value})}
+                        placeholder="••••••••" 
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-xl border border-gray-100">
+                  <div className="space-y-2">
+                    <Label>Business UPI ID (for QR codes)</Label>
+                    <Input 
+                      value={config.upi_id} 
+                      onChange={(e) => setConfig({...config, upi_id: e.target.value})}
+                      placeholder="business@oksbi" 
+                    />
+                  </div>
+                </div>
               </div>
 
-              <div className="p-4 rounded-xl border border-gray-100 flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  <div className="w-12 h-12 rounded-lg bg-purple-50 flex items-center justify-center text-purple-600 font-bold">
-                    PP
-                  </div>
-                  <div>
-                    <h4 className="font-bold text-gray-900">PhonePe Business</h4>
-                    <p className="text-xs text-gray-500">Accept UPI payments directly.</p>
-                  </div>
-                </div>
-                <Button variant="outline" size="sm">Configure</Button>
-              </div>
-
-              <div className="space-y-4 pt-4 border-t border-gray-50">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <Label>Auto-generate UPI QR</Label>
-                    <p className="text-xs text-gray-500">Show dynamic QR code on every invoice.</p>
-                  </div>
-                  <Switch defaultChecked />
-                </div>
+              <div className="pt-4 flex justify-end">
+                <Button className="bg-blue-600" onClick={() => handleSaveConfig({})} disabled={isSaving}>
+                  {isSaving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
+                  Save Payment Settings
+                </Button>
               </div>
             </CardContent>
           </Card>
@@ -198,11 +451,11 @@ export default function Settings() {
               <CardTitle>Bill Customization</CardTitle>
               <CardDescription>Configure how your invoices look and what information they show.</CardDescription>
             </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <CardContent className="space-y-8">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pb-6 border-b">
                 <div className="space-y-4">
                   <Label>Default Bill Type</Label>
-                  <Select defaultValue="a4">
+                  <Select value={config.bill_type} onValueChange={(val) => handleSaveConfig({ bill_type: val })}>
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
@@ -215,162 +468,90 @@ export default function Settings() {
                 </div>
                 <div className="space-y-4">
                   <Label>Invoice Prefix</Label>
-                  <Input defaultValue="INV-" />
+                  <Input 
+                    value={config.invoice_prefix} 
+                    onChange={(e) => setConfig({...config, invoice_prefix: e.target.value})} 
+                  />
                 </div>
               </div>
 
-              <div className="space-y-4 pt-4 border-t border-gray-50">
-                <h4 className="font-bold text-sm">Invoice Elements</h4>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-4">
+              <div className="space-y-4">
+                <h4 className="font-bold text-sm">Select Default A4 Template</h4>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+                  {[
+                    { id: 'modern', name: 'Modern Blue', desc: 'Bold, professional, clean headers.' },
+                    { id: 'classic', name: 'Classic Professional', desc: 'Traditional serif layout, structured.' },
+                    { id: 'minimal', name: 'Minimalist', desc: 'Very clean, focus on content.' }
+                  ].map((t) => (
+                    <div 
+                      key={t.id} 
+                      className={cn(
+                        "group relative cursor-pointer flex flex-col gap-2",
+                        config.invoice_template === t.id && "text-blue-600"
+                      )}
+                      onClick={() => handleSaveConfig({ invoice_template: t.id })}
+                    >
+                      {renderTemplate(t.id, MOCK_INVOICE, true)}
+                      <div className="flex justify-between items-center px-1">
+                        <div className="space-y-0.5">
+                          <p className="text-xs font-bold">{t.name}</p>
+                          <p className="text-[10px] text-gray-500 line-clamp-1">{t.desc}</p>
+                        </div>
+                        {config.invoice_template === t.id && <CheckCircle2 className="w-4 h-4" />}
+                      </div>
+                      <Dialog>
+                        <DialogTrigger asChild>
+                          <Button variant="ghost" size="icon" className="absolute top-2 right-2 bg-white/90 backdrop-blur shadow-sm opacity-0 group-hover:opacity-100 transition-opacity rounded-full h-8 w-8" onClick={(e) => e.stopPropagation()}>
+                            <Eye className="w-4 h-4" />
+                          </Button>
+                        </DialogTrigger>
+                        <DialogContent className="max-w-[800px] h-[90vh] overflow-y-auto p-0">
+                          {renderTemplate(t.id, MOCK_INVOICE)}
+                        </DialogContent>
+                      </Dialog>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="pt-6 border-t">
+                <h4 className="font-bold text-sm mb-4">Invoice Elements</h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-6">
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="text-sm font-medium">Show Business Logo</p>
                       <p className="text-xs text-gray-500">Display logo at the top.</p>
                     </div>
-                    <Switch defaultChecked />
+                    <Switch checked={config.show_logo} onCheckedChange={(val) => handleSaveConfig({ show_logo: val })} />
                   </div>
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="text-sm font-medium">Show Payment QR Code</p>
                       <p className="text-xs text-gray-500">Add dynamic UPI QR code.</p>
                     </div>
-                    <Switch defaultChecked />
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-medium">Show Terms & Conditions</p>
-                      <p className="text-xs text-gray-500">Include standard T&C.</p>
-                    </div>
-                    <Switch defaultChecked />
+                    <Switch checked={config.show_qr} onCheckedChange={(val) => handleSaveConfig({ show_qr: val })} />
                   </div>
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="text-sm font-medium">Show Bank Details</p>
                       <p className="text-xs text-gray-500">Include account info for NEFT.</p>
                     </div>
-                    <Switch defaultChecked />
+                    <Switch checked={config.show_bank} onCheckedChange={(val) => handleSaveConfig({ show_bank: val })} />
                   </div>
                   <div className="flex items-center justify-between">
                     <div>
-                      <p className="text-sm font-medium">Show WhatsApp Details</p>
-                      <p className="text-xs text-gray-500">Add contact number on bill.</p>
+                      <p className="text-sm font-medium">Show Terms & Conditions</p>
+                      <p className="text-xs text-gray-500">Include standard T&C.</p>
                     </div>
-                    <Switch defaultChecked />
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-medium">Show Customer ID</p>
-                      <p className="text-xs text-gray-500">Include unique customer ID.</p>
-                    </div>
-                    <Switch />
+                    <Switch checked={config.show_tnc} onCheckedChange={(val) => handleSaveConfig({ show_tnc: val })} />
                   </div>
                 </div>
-              </div>
-
-              <div className="space-y-4 pt-4 border-t border-gray-50">
-                <h4 className="font-bold text-sm">Select Default A4 Template</h4>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
-                  {[
-                    { 
-                      id: 'modern', 
-                      name: 'Modern Blue', 
-                      description: 'Clean, bold headers with accent colors.',
-                      img: 'https://picsum.photos/seed/modern-bill/400/560' 
-                    },
-                    { 
-                      id: 'classic', 
-                      name: 'Classic Professional', 
-                      description: 'Traditional layout with structured tables.',
-                      img: 'https://picsum.photos/seed/classic-bill/400/560' 
-                    },
-                    { 
-                      id: 'minimal', 
-                      name: 'Minimalist', 
-                      description: 'Lightweight design focusing on content.',
-                      img: 'https://picsum.photos/seed/minimal-bill/400/560' 
-                    },
-                  ].map((t) => (
-                    <div 
-                      key={t.id} 
-                      className={cn(
-                        "group relative cursor-pointer rounded-xl border-2 transition-all overflow-hidden",
-                        t.id === 'modern' ? "border-blue-600 ring-2 ring-blue-100" : "border-gray-100 hover:border-blue-200"
-                      )}
-                    >
-                      <div className="aspect-[1/1.4] relative">
-                        <img src={t.img} alt={t.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                        {t.id === 'modern' && (
-                          <div className="absolute top-2 right-2 bg-blue-600 text-white p-1 rounded-full">
-                            <CheckCircle2 className="w-4 h-4" />
-                          </div>
-                        )}
-                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity gap-2">
-                          <Button variant="secondary" size="sm">Preview</Button>
-                          <Button size="sm" className="bg-blue-600">Select</Button>
-                        </div>
-                      </div>
-                      <div className="p-3 bg-white border-t">
-                        <p className="text-sm font-bold text-gray-900">{t.name}</p>
-                        <p className="text-[10px] text-gray-500 mt-0.5">{t.description}</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="space-y-4 pt-4 border-t border-gray-50">
-                <h4 className="font-bold text-sm">Template Customization</h4>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="space-y-3">
-                    <Label className="text-xs text-gray-500 uppercase font-bold">Accent Color</Label>
-                    <div className="flex gap-3">
-                      {["#2563eb", "#10b981", "#f59e0b", "#ef4444", "#141414"].map((color) => (
-                        <button 
-                          key={color}
-                          className={cn(
-                            "w-8 h-8 rounded-full border-2 border-white ring-1 ring-gray-200 transition-transform hover:scale-110",
-                            color === "#2563eb" && "ring-blue-600 ring-2"
-                          )}
-                          style={{ backgroundColor: color }}
-                        ></button>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="space-y-3">
-                    <Label className="text-xs text-gray-500 uppercase font-bold">Font Family</Label>
-                    <Select defaultValue="inter">
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="inter">Inter (Sans-serif)</SelectItem>
-                        <SelectItem value="roboto">Roboto (Classic)</SelectItem>
-                        <SelectItem value="mono">JetBrains Mono (Technical)</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-              </div>
-
-              <div className="space-y-2 pt-4 border-t border-gray-50">
-                <Label>Bank Account Details</Label>
-                <div className="grid grid-cols-2 gap-4">
-                  <Input placeholder="Bank Name" defaultValue="State Bank of India" />
-                  <Input placeholder="Account Number" defaultValue="123456789012" />
-                  <Input placeholder="IFSC Code" defaultValue="SBIN0001234" />
-                  <Input placeholder="Account Holder" defaultValue="CSC Digital Center" />
-                </div>
-              </div>
-
-              <div className="space-y-2 pt-4 border-t border-gray-50">
-                <Label>Terms & Conditions</Label>
-                <Input defaultValue="1. Goods once sold will not be taken back. 2. Subject to New Delhi jurisdiction." />
               </div>
 
               <div className="pt-4 flex justify-end">
-                <Button className="bg-blue-600">
-                  <Save className="w-4 h-4 mr-2" />
-                  Save Bill Settings
+                <Button className="bg-blue-600" onClick={() => handleSaveConfig({})} disabled={isSaving}>
+                  {isSaving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
+                  Save All Settings
                 </Button>
               </div>
             </CardContent>

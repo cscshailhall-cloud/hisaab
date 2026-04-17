@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { 
   BarChart3, 
   Download, 
@@ -29,26 +29,113 @@ import {
   Pie,
   Cell
 } from "recharts";
-
-const revenueData = [
-  { month: "Jan", revenue: 45000, expenses: 32000 },
-  { month: "Feb", revenue: 52000, expenses: 34000 },
-  { month: "Mar", revenue: 48000, expenses: 31000 },
-  { month: "Apr", revenue: 61000, expenses: 38000 },
-  { month: "May", revenue: 55000, expenses: 35000 },
-  { month: "Jun", revenue: 67000, expenses: 40000 },
-];
-
-const serviceData = [
-  { name: "Government", value: 45, color: "#2563eb" },
-  { name: "Utility", value: 25, color: "#10b981" },
-  { name: "Banking", value: 15, color: "#f59e0b" },
-  { name: "Insurance", value: 10, color: "#ef4444" },
-  { name: "Other", value: 5, color: "#8b5cf6" },
-];
+import { supabase } from "@/lib/supabase";
 
 export default function Reports() {
   const [timeRange, setTimeRange] = useState("last_6_months");
+  const [invoices, setInvoices] = useState<any[]>([]);
+  const [expenses, setExpenses] = useState<any[]>([]);
+
+  useEffect(() => {
+    const fetchData = async () => {
+      const { data: invData } = await supabase.from("invoices").select("*");
+      const { data: expData } = await supabase.from("expenses").select("*");
+      if (invData) setInvoices(invData);
+      if (expData) setExpenses(expData);
+    };
+    fetchData();
+  }, []);
+
+  const revenueData = useMemo(() => {
+    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const now = new Date();
+    const last6Months = Array.from({ length: 6 }, (_, i) => {
+      const d = new Date();
+      d.setMonth(now.getMonth() - i);
+      return { 
+        month: months[d.getMonth()], 
+        revenue: 0, 
+        expenses: 0,
+        monthIndex: d.getMonth(),
+        year: d.getFullYear()
+      };
+    }).reverse();
+
+    invoices.forEach(inv => {
+      const d = new Date(inv.date);
+      const m = d.getMonth();
+      const y = d.getFullYear();
+      const entry = last6Months.find(e => e.monthIndex === m && e.year === y);
+      if (entry && inv.status === 'Paid') {
+        entry.revenue += inv.amount;
+      }
+    });
+
+    expenses.forEach(exp => {
+      const d = new Date(exp.date);
+      const m = d.getMonth();
+      const y = d.getFullYear();
+      const entry = last6Months.find(e => e.monthIndex === m && e.year === y);
+      if (entry) {
+        entry.expenses += exp.amount;
+      }
+    });
+
+    return last6Months;
+  }, [invoices, expenses]);
+
+  const serviceData = useMemo(() => {
+    const categories: Record<string, { name: string, value: number, color: string }> = {
+      "Government": { name: "Government", value: 0, color: "#2563eb" },
+      "Utility": { name: "Utility", value: 0, color: "#10b981" },
+      "Banking": { name: "Banking", value: 0, color: "#f59e0b" },
+      "Insurance": { name: "Insurance", value: 0, color: "#ef4444" },
+      "Other": { name: "Other", value: 0, color: "#8b5cf6" },
+    };
+
+    let total = 0;
+    invoices.forEach(inv => {
+      try {
+        const items = JSON.parse(inv.items || "[]");
+        items.forEach((item: any) => {
+          // Note: In local state we don't have category on item usually, 
+          // but we might have it from services table joined.
+          // For now we'll categorize based on name or leave as Other if unknown
+          // Ideally we join services or store category on invoice item.
+          // Fallback to "Other"
+          categories["Other"].value += item.price * item.quantity;
+          total += item.price * item.quantity;
+        });
+      } catch (e) {
+        // Fallback for simple invoices
+        if (inv.status === 'Paid') {
+           categories["Other"].value += inv.amount;
+           total += inv.amount;
+        }
+      }
+    });
+
+    if (total === 0) return Object.values(categories);
+
+    return Object.values(categories).map(c => ({
+      ...c,
+      value: Math.round((c.value / total) * 100)
+    })).filter(c => c.value > 0);
+  }, [invoices]);
+
+  const stats = useMemo(() => {
+    const totalRevenue = invoices.filter(i => i.status === 'Paid').reduce((acc, curr) => acc + curr.amount, 0);
+    const totalExpenses = expenses.reduce((acc, curr) => acc + curr.amount, 0);
+    const netProfit = totalRevenue - totalExpenses;
+    const avgBill = invoices.length > 0 ? totalRevenue / invoices.length : 0;
+    
+    return [
+      { title: "Net Profit", value: `₹${netProfit.toLocaleString()}`, change: "+12.5%", positive: true },
+      { title: "Avg. Bill Value", value: `₹${Math.round(avgBill).toLocaleString()}`, change: "+5.2%", positive: true },
+      { title: "Customer Retention", value: "68%", change: "-2.1%", positive: false },
+      { title: "Staff Efficiency", value: "84%", change: "+8.4%", positive: true },
+    ];
+  }, [invoices, expenses]);
 
   return (
     <div className="space-y-6">
@@ -154,12 +241,7 @@ export default function Reports() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        {[
-          { title: "Net Profit", value: "₹1,24,500", change: "+12.5%", positive: true },
-          { title: "Avg. Bill Value", value: "₹450", change: "+5.2%", positive: true },
-          { title: "Customer Retention", value: "68%", change: "-2.1%", positive: false },
-          { title: "Staff Efficiency", value: "84%", change: "+8.4%", positive: true },
-        ].map((stat) => (
+        {stats.map((stat) => (
           <Card key={stat.title} className="border-none shadow-sm">
             <CardContent className="p-6">
               <p className="text-sm text-gray-500 font-medium">{stat.title}</p>

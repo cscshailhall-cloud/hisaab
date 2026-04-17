@@ -4,10 +4,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ShieldCheck, User, Mail, KeyRound, Save, LogOut } from "lucide-react";
+import { ShieldCheck, User, Mail, KeyRound, Save, LogOut, Loader2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import { logout, auth } from "@/lib/firebase";
-import { updateProfile as firebaseUpdateProfile, updatePassword as firebaseUpdatePassword } from "firebase/auth";
 import { toast } from "sonner";
 
 export default function Profile() {
@@ -38,23 +36,23 @@ export default function Profile() {
     
     setIsLoading(true);
     try {
-      // Update Firebase Profile
-      await firebaseUpdateProfile(user, {
-        displayName: displayName
+      // 1. Update Supabase Auth Metadata
+      const { error: authError } = await supabase.auth.updateUser({
+        data: { full_name: displayName }
       });
+      if (authError) throw authError;
 
-      // Update Profiles Table in Supabase
+      // 2. Update Profiles Table in Supabase
       const { error: profileError } = await supabase
         .from('profiles')
         .upsert({
-          id: user.uid,
+          id: user.id,
           full_name: displayName,
           username: username,
           shop_name: shopName,
           address: address,
           website: website,
           email: user.email,
-          phone: user.phoneNumber,
           updated_at: new Date().toISOString()
         });
       
@@ -76,7 +74,10 @@ export default function Profile() {
     
     setIsLoading(true);
     try {
-      await firebaseUpdatePassword(user, newPassword);
+      const { error } = await supabase.auth.updateUser({
+        password: newPassword
+      });
+      if (error) throw error;
       toast.success("Password changed successfully");
       setNewPassword("");
       setConfirmPassword("");
@@ -85,6 +86,11 @@ export default function Profile() {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleLogout = async () => {
+    const { error } = await supabase.auth.signOut();
+    if (error) toast.error("Logout failed");
   };
 
   return (
@@ -98,20 +104,20 @@ export default function Profile() {
         <div className="md:col-span-1 space-y-4">
           <Card className="border-none shadow-sm">
             <CardContent className="pt-6 text-center">
-              <div className="w-24 h-24 bg-blue-100 rounded-full mx-auto flex items-center justify-center text-blue-600 mb-4">
-                {user?.photoURL ? (
-                  <img src={user.photoURL} alt="Profile" className="w-full h-full rounded-full object-cover" />
+              <div className="w-24 h-24 bg-blue-100 rounded-full mx-auto flex items-center justify-center text-blue-600 mb-4 overflow-hidden">
+                {profile?.avatar_url || user?.user_metadata?.avatar_url ? (
+                  <img src={profile?.avatar_url || user?.user_metadata?.avatar_url} alt="Profile" className="w-full h-full object-cover" />
                 ) : (
                   <User className="w-12 h-12" />
                 )}
               </div>
-              <h2 className="text-lg font-bold text-gray-900">{user?.displayName || "User"}</h2>
+              <h2 className="text-lg font-bold text-gray-900">{profile?.full_name || user?.user_metadata?.full_name || "User"}</h2>
               <p className="text-sm text-gray-500">{user?.email}</p>
               <div className="mt-6 pt-6 border-t border-gray-100">
                 <Button 
                   variant="outline" 
                   className="w-full text-red-600 hover:bg-red-50 hover:text-red-700 border-red-100"
-                  onClick={() => logout()}
+                  onClick={handleLogout}
                 >
                   <LogOut className="w-4 h-4 mr-2" />
                   Sign Out
@@ -125,7 +131,7 @@ export default function Profile() {
           <Card className="border-none shadow-sm">
             <CardHeader>
               <CardTitle className="text-lg">Profile Information</CardTitle>
-              <CardDescription>Update your account's display name.</CardDescription>
+              <CardDescription>Update your account's display name and shop details.</CardDescription>
             </CardHeader>
             <CardContent>
               <form onSubmit={handleUpdateProfile} className="space-y-4">
@@ -136,6 +142,7 @@ export default function Profile() {
                       id="display-name" 
                       value={displayName}
                       onChange={(e) => setDisplayName(e.target.value)}
+                      className="h-11"
                     />
                   </div>
                   <div className="space-y-2">
@@ -145,6 +152,7 @@ export default function Profile() {
                       placeholder="johndoe"
                       value={username}
                       onChange={(e) => setUsername(e.target.value)}
+                      className="h-11"
                     />
                   </div>
                 </div>
@@ -155,6 +163,7 @@ export default function Profile() {
                       id="shop-name" 
                       value={shopName}
                       onChange={(e) => setShopName(e.target.value)}
+                      className="h-11"
                     />
                   </div>
                   <div className="space-y-2">
@@ -163,6 +172,7 @@ export default function Profile() {
                       id="profile-address" 
                       value={address}
                       onChange={(e) => setAddress(e.target.value)}
+                      className="h-11"
                     />
                   </div>
                 </div>
@@ -173,6 +183,7 @@ export default function Profile() {
                     placeholder="https://example.com"
                     value={website}
                     onChange={(e) => setWebsite(e.target.value)}
+                    className="h-11"
                   />
                 </div>
                 <div className="space-y-2">
@@ -181,12 +192,12 @@ export default function Profile() {
                     id="email-readonly" 
                     value={user?.email || ""} 
                     disabled 
-                    className="bg-gray-50"
+                    className="bg-gray-50 h-11"
                   />
                   <p className="text-[10px] text-gray-400 italic">Email cannot be changed via profile update.</p>
                 </div>
-                <Button className="bg-blue-600 hover:bg-blue-700" disabled={isLoading}>
-                  <Save className="w-4 h-4 mr-2" />
+                <Button className="bg-blue-600 hover:bg-blue-700 h-11" disabled={isLoading}>
+                  {isLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
                   {isLoading ? "Saving..." : "Save Changes"}
                 </Button>
               </form>
@@ -207,6 +218,7 @@ export default function Profile() {
                     type="password" 
                     value={newPassword}
                     onChange={(e) => setNewPassword(e.target.value)}
+                    className="h-11"
                   />
                 </div>
                 <div className="space-y-2">
@@ -216,10 +228,11 @@ export default function Profile() {
                     type="password" 
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
+                    className="h-11"
                   />
                 </div>
-                <Button className="bg-blue-600 hover:bg-blue-700" disabled={isLoading}>
-                  <KeyRound className="w-4 h-4 mr-2" />
+                <Button className="bg-blue-600 hover:bg-blue-700 h-11" disabled={isLoading}>
+                  {isLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <KeyRound className="w-4 h-4 mr-2" />}
                   {isLoading ? "Updating..." : "Update Password"}
                 </Button>
               </form>

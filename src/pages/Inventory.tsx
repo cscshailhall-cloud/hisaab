@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { 
   Plus, 
   Search, 
@@ -7,7 +7,8 @@ import {
   ArrowUpRight, 
   ArrowDownRight,
   History,
-  MoreVertical
+  MoreVertical,
+  Trash2
 } from "lucide-react";
 import { 
   Table, 
@@ -22,21 +23,118 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
+import { supabase } from "@/lib/supabase";
+import { toast } from "sonner";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
 
-const mockInventory = [
-  { id: "1", name: "A4 Paper Rims", quantity: 45, unit: "Rims", threshold: 10, status: "In Stock" },
-  { id: "2", name: "Printer Ink (Black)", quantity: 4, unit: "Bottles", threshold: 5, status: "Low Stock" },
-  { id: "3", name: "PVC Cards", quantity: 250, unit: "Cards", threshold: 50, status: "In Stock" },
-  { id: "4", name: "Biometric Device", quantity: 2, unit: "Units", threshold: 1, status: "In Stock" },
-  { id: "5", name: "Lamination Sheets", quantity: 15, unit: "Packs", threshold: 20, status: "Low Stock" },
-];
+interface InventoryItem {
+  id: string;
+  name: string;
+  quantity: number;
+  unit: string;
+  threshold: number;
+  status: string;
+  price?: number;
+}
 
 export default function Inventory() {
+  const [items, setItems] = useState<InventoryItem[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [showAddDialog, setShowAddDialog] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [newItem, setNewItem] = useState({
+    name: "",
+    quantity: "",
+    unit: "",
+    threshold: "",
+    price: ""
+  });
 
-  const filteredInventory = mockInventory.filter(item => 
+  const fetchInventory = async () => {
+    const { data, error } = await supabase
+      .from("inventory")
+      .select("*")
+      .order("name", { ascending: true });
+    
+    if (error) {
+      console.error("Error fetching inventory:", error);
+    } else {
+      setItems(data || []);
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    fetchInventory();
+
+    const channel = supabase
+      .channel('inventory_changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'inventory' }, fetchInventory)
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
+
+  const handleAddItem = async () => {
+    if (!newItem.name || !newItem.quantity || !newItem.unit || !newItem.threshold) {
+      toast.error("Please fill all required fields");
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const { error } = await supabase.from("inventory").insert({
+        name: newItem.name,
+        quantity: parseInt(newItem.quantity),
+        unit: newItem.unit,
+        threshold: parseInt(newItem.threshold),
+        price: newItem.price ? parseFloat(newItem.price) : 0,
+        status: parseInt(newItem.quantity) <= parseInt(newItem.threshold) ? "Low Stock" : "In Stock"
+      });
+
+      if (error) throw error;
+
+      toast.success("Item added to inventory");
+      setShowAddDialog(false);
+      setNewItem({ name: "", quantity: "", unit: "", threshold: "", price: "" });
+    } catch (error: any) {
+      toast.error("Failed to add item", { description: error.message });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleDeleteItem = async (id: string) => {
+    if (!confirm("Delete this inventory item?")) return;
+    try {
+      const { error } = await supabase.from("inventory").delete().eq("id", id);
+      if (error) throw error;
+      toast.success("Item removed");
+    } catch (error: any) {
+      toast.error("Failed to delete item", { description: error.message });
+    }
+  };
+
+  const filteredInventory = items.filter(item => 
     item.name.toLowerCase().includes(searchTerm.toLowerCase())
   );
+
+  const stats = {
+    totalItems: items.length,
+    lowStock: items.filter(i => i.quantity <= i.threshold).length,
+    totalValue: items.reduce((acc, curr) => acc + (curr.price || 0) * curr.quantity, 0)
+  };
 
   return (
     <div className="space-y-6">
@@ -45,7 +143,7 @@ export default function Inventory() {
           <h1 className="text-2xl font-bold text-gray-900">Inventory</h1>
           <p className="text-gray-500">Monitor stock levels and manage center supplies.</p>
         </div>
-        <Button className="bg-blue-600 hover:bg-blue-700">
+        <Button className="bg-blue-600 hover:bg-blue-700" onClick={() => setShowAddDialog(true)}>
           <Plus className="w-4 h-4 mr-2" />
           Add New Item
         </Button>
@@ -57,7 +155,7 @@ export default function Inventory() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-gray-500 font-medium">Total Items</p>
-                <h3 className="text-2xl font-bold text-gray-900 mt-1">316</h3>
+                <h3 className="text-2xl font-bold text-gray-900 mt-1">{stats.totalItems}</h3>
               </div>
               <div className="p-3 bg-blue-50 rounded-xl text-blue-600">
                 <Package className="w-6 h-6" />
@@ -71,7 +169,7 @@ export default function Inventory() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-gray-500 font-medium">Low Stock Alerts</p>
-                <h3 className="text-2xl font-bold text-red-600 mt-1">2</h3>
+                <h3 className="text-2xl font-bold text-red-600 mt-1">{stats.lowStock}</h3>
               </div>
               <div className="p-3 bg-red-50 rounded-xl text-red-600">
                 <AlertTriangle className="w-6 h-6" />
@@ -85,7 +183,7 @@ export default function Inventory() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-gray-500 font-medium">Stock Value</p>
-                <h3 className="text-2xl font-bold text-gray-900 mt-1">₹12,450</h3>
+                <h3 className="text-2xl font-bold text-gray-900 mt-1">₹{stats.totalValue.toLocaleString()}</h3>
               </div>
               <div className="p-3 bg-green-50 rounded-xl text-green-600">
                 <ArrowUpRight className="w-6 h-6" />
@@ -141,7 +239,7 @@ export default function Inventory() {
                           variant="secondary" 
                           className={isLow ? "bg-red-50 text-red-700" : "bg-green-50 text-green-700"}
                         >
-                          {item.status}
+                          {isLow ? "Low Stock" : "In Stock"}
                         </Badge>
                       </TableCell>
                       <TableCell className="w-[200px]">
@@ -155,14 +253,8 @@ export default function Inventory() {
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-2">
-                          <Button variant="ghost" size="icon" className="h-8 w-8">
-                            <ArrowUpRight className="w-4 h-4 text-green-600" />
-                          </Button>
-                          <Button variant="ghost" size="icon" className="h-8 w-8">
-                            <ArrowDownRight className="w-4 h-4 text-red-600" />
-                          </Button>
-                          <Button variant="ghost" size="icon" className="h-8 w-8">
-                            <History className="w-4 h-4 text-gray-400" />
+                          <Button variant="ghost" size="icon" className="h-8 w-8 text-red-500" onClick={() => handleDeleteItem(item.id)}>
+                            <Trash2 className="w-4 h-4" />
                           </Button>
                         </div>
                       </TableCell>
@@ -174,6 +266,77 @@ export default function Inventory() {
           </div>
         </CardContent>
       </Card>
+
+      <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Add Inventory Item</DialogTitle>
+            <DialogDescription>
+              Add a new item to your center inventory.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label htmlFor="i-name">Item Name</Label>
+              <Input 
+                id="i-name" 
+                placeholder="e.g., A4 Paper" 
+                value={newItem.name}
+                onChange={(e) => setNewItem({...newItem, name: e.target.value})}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="grid gap-2">
+                <Label htmlFor="i-qty">Quantity</Label>
+                <Input 
+                  id="i-qty" 
+                  type="number" 
+                  placeholder="0" 
+                  value={newItem.quantity}
+                  onChange={(e) => setNewItem({...newItem, quantity: e.target.value})}
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="i-unit">Unit</Label>
+                <Input 
+                  id="i-unit" 
+                  placeholder="e.g., Rims" 
+                  value={newItem.unit}
+                  onChange={(e) => setNewItem({...newItem, unit: e.target.value})}
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="grid gap-2">
+                <Label htmlFor="i-thr">Threshold (Low Stock)</Label>
+                <Input 
+                  id="i-thr" 
+                  type="number" 
+                  placeholder="10" 
+                  value={newItem.threshold}
+                  onChange={(e) => setNewItem({...newItem, threshold: e.target.value})}
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="i-price">Price Per Unit (Optional)</Label>
+                <Input 
+                  id="i-price" 
+                  type="number" 
+                  placeholder="0.00" 
+                  value={newItem.price}
+                  onChange={(e) => setNewItem({...newItem, price: e.target.value})}
+                />
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowAddDialog(false)}>Cancel</Button>
+            <Button className="bg-blue-600" onClick={handleAddItem} disabled={isSubmitting}>
+              {isSubmitting ? "Adding..." : "Add Item"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
