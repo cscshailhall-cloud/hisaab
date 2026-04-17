@@ -5,6 +5,7 @@ import Customers from "./pages/Customers";
 import Billing from "./pages/Billing";
 import Invoices from "./pages/Invoices";
 import Services from "./pages/Services";
+import Profile from "./pages/Profile";
 import Expenses from "./pages/Expenses";
 import Inventory from "./pages/Inventory";
 import Staff from "./pages/Staff";
@@ -39,6 +40,7 @@ function AppRoutes() {
         <Route path="/billing" element={<Billing />} />
         <Route path="/invoices" element={<Invoices />} />
         <Route path="/services" element={<Services />} />
+        <Route path="/profile" element={<Profile />} />
         <Route path="/expenses" element={<Expenses />} />
         <Route path="/inventory" element={<Inventory />} />
         <Route path="/staff" element={<Staff />} />

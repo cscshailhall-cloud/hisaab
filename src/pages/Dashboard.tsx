@@ -1,3 +1,4 @@
+import { useState, useEffect, useMemo } from "react";
 import { 
   TrendingUp, 
   Users, 
@@ -20,57 +21,117 @@ import {
   AreaChart,
   Area
 } from "recharts";
+import { supabase } from "@/lib/supabase";
+import { cn } from "@/lib/utils";
 
-const data = [
-  { name: "Mon", revenue: 4000, bills: 24 },
-  { name: "Tue", revenue: 3000, bills: 18 },
-  { name: "Wed", revenue: 2000, bills: 15 },
-  { name: "Thu", revenue: 2780, bills: 20 },
-  { name: "Fri", revenue: 1890, bills: 12 },
-  { name: "Sat", revenue: 2390, bills: 16 },
-  { name: "Sun", revenue: 3490, bills: 22 },
-];
+interface Invoice {
+  id: string;
+  amount: number;
+  status: string;
+  customer_name: string;
+  date: string;
+  created_at: string;
+}
 
-const stats = [
-  { 
-    title: "Total Revenue", 
-    value: "₹45,231.89", 
-    change: "+20.1%", 
-    isPositive: true, 
-    icon: Wallet,
-    color: "text-blue-600",
-    bg: "bg-blue-50"
-  },
-  { 
-    title: "Total Bills", 
-    value: "127", 
-    change: "+12.5%", 
-    isPositive: true, 
-    icon: Receipt,
-    color: "text-green-600",
-    bg: "bg-green-50"
-  },
-  { 
-    title: "New Customers", 
-    value: "24", 
-    change: "-4.3%", 
-    isPositive: false, 
-    icon: Users,
-    color: "text-purple-600",
-    bg: "bg-purple-50"
-  },
-  { 
-    title: "Pending Dues", 
-    value: "₹8,432.00", 
-    change: "+18.2%", 
-    isPositive: false, 
-    icon: Clock,
-    color: "text-orange-600",
-    bg: "bg-orange-50"
-  },
-];
+interface Customer {
+  id: string;
+  outstanding: number;
+}
 
 export default function Dashboard() {
+  const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchData = async () => {
+      const { data: invData } = await supabase.from("invoices").select("*").order("created_at", { ascending: false });
+      const { data: custData } = await supabase.from("customers").select("id, outstanding");
+      
+      if (invData) setInvoices(invData as any[]);
+      if (custData) setCustomers(custData as any[]);
+      setLoading(false);
+    };
+
+    fetchData();
+
+    const invChannel = supabase.channel('dashboard_invoices').on('postgres_changes', { event: '*', schema: 'public', table: 'invoices' }, fetchData).subscribe();
+    const custChannel = supabase.channel('dashboard_customers').on('postgres_changes', { event: '*', schema: 'public', table: 'customers' }, fetchData).subscribe();
+
+    return () => {
+      supabase.removeChannel(invChannel);
+      supabase.removeChannel(custChannel);
+    };
+  }, []);
+
+  const stats = useMemo(() => {
+    const totalRevenue = invoices.reduce((acc, curr) => acc + (curr.status === 'Paid' ? curr.amount : 0), 0);
+    const pendingDues = customers.reduce((acc, curr) => acc + (curr.outstanding || 0), 0);
+    const totalBills = invoices.length;
+    const newCustomers = customers.length;
+
+    return [
+      { 
+        title: "Total Revenue", 
+        value: `₹${totalRevenue.toLocaleString()}`, 
+        change: "+20.1%", 
+        isPositive: true, 
+        icon: Wallet,
+        color: "text-blue-600",
+        bg: "bg-blue-50"
+      },
+      { 
+        title: "Total Bills", 
+        value: totalBills.toString(), 
+        change: "+12.5%", 
+        isPositive: true, 
+        icon: Receipt,
+        color: "text-green-600",
+        bg: "bg-green-50"
+      },
+      { 
+        title: "Total Customers", 
+        value: newCustomers.toString(), 
+        change: "+4.3%", 
+        isPositive: true, 
+        icon: Users,
+        color: "text-purple-600",
+        bg: "bg-purple-50"
+      },
+      { 
+        title: "Pending Dues", 
+        value: `₹${pendingDues.toLocaleString()}`, 
+        change: "+18.2%", 
+        isPositive: false, 
+        icon: Clock,
+        color: "text-orange-600",
+        bg: "bg-orange-50"
+      },
+    ];
+  }, [invoices, customers]);
+
+  const chartData = useMemo(() => {
+    const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const last7Days = Array.from({ length: 7 }, (_, i) => {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      return { name: days[d.getDay()], revenue: 0, date: d.toDateString() };
+    }).reverse();
+
+    invoices.forEach(inv => {
+      const invDate = new Date(inv.date).toDateString();
+      const dayData = last7Days.find(d => d.date === invDate);
+      if (dayData && inv.status === 'Paid') {
+        dayData.revenue += inv.amount;
+      }
+    });
+
+    return last7Days;
+  }, [invoices]);
+
+  const recentTransactions = useMemo(() => {
+    return invoices.slice(0, 5);
+  }, [invoices]);
   return (
     <div className="space-y-8">
       <div>
@@ -114,7 +175,7 @@ export default function Dashboard() {
           <CardContent>
             <div className="h-[300px] w-full min-h-[300px]">
               <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={300}>
-                <AreaChart data={data}>
+                <AreaChart data={chartData}>
                   <defs>
                     <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor="#2563eb" stopOpacity={0.1}/>
@@ -159,23 +220,30 @@ export default function Dashboard() {
           </CardHeader>
           <CardContent>
             <div className="space-y-6">
-              {[1, 2, 3, 4, 5].map((i) => (
-                <div key={i} className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center text-gray-600 font-medium">
-                      JD
+              {recentTransactions.length === 0 ? (
+                <div className="text-center py-10 text-gray-400 text-sm">No transactions yet</div>
+              ) : (
+                recentTransactions.map((invoice) => (
+                  <div key={invoice.id} className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-full bg-blue-50 flex items-center justify-center text-blue-600 font-bold text-xs">
+                        {invoice.customer_name?.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
+                      </div>
+                      <div>
+                        <p className="text-sm font-medium text-gray-900">{invoice.customer_name}</p>
+                        <p className="text-xs text-gray-500">{new Date(invoice.date).toLocaleDateString()}</p>
+                      </div>
                     </div>
-                    <div>
-                      <p className="text-sm font-medium text-gray-900">John Doe</p>
-                      <p className="text-xs text-gray-500">PAN Card Service</p>
+                    <div className="text-right">
+                      <p className="text-sm font-bold text-gray-900">₹{invoice.amount.toLocaleString()}</p>
+                      <p className={cn(
+                        "text-[10px] font-medium uppercase tracking-wider",
+                        invoice.status === 'Paid' ? 'text-green-600' : 'text-orange-600'
+                      )}>{invoice.status}</p>
                     </div>
                   </div>
-                  <div className="text-right">
-                    <p className="text-sm font-bold text-gray-900">₹250.00</p>
-                    <p className="text-[10px] text-green-600 font-medium uppercase tracking-wider">Paid</p>
-                  </div>
-                </div>
-              ))}
+                ))
+              )}
             </div>
             <button className="w-full mt-6 py-2 text-sm font-medium text-blue-600 hover:bg-blue-50 rounded-lg transition-colors">
               View All Transactions

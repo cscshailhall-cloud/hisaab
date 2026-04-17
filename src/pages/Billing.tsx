@@ -50,19 +50,7 @@ import {
   DialogDescription,
   DialogFooter
 } from "@/components/ui/dialog";
-import { 
-  collection, 
-  onSnapshot, 
-  addDoc, 
-  query, 
-  orderBy, 
-  serverTimestamp,
-  doc,
-  updateDoc,
-  increment,
-  getDoc
-} from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { supabase } from "@/lib/supabase";
 import jsPDF from "jspdf";
 import html2canvas from "html2canvas";
 
@@ -105,15 +93,24 @@ export default function Billing() {
   const [isAddingCustomer, setIsAddingCustomer] = useState(false);
 
   useEffect(() => {
-    const unsubCustomers = onSnapshot(collection(db, "customers"), (snapshot) => {
-      setCustomers(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Customer)));
-    });
-    const unsubServices = onSnapshot(collection(db, "services"), (snapshot) => {
-      setServices(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Service)));
-    });
+    const fetchCustomers = async () => {
+      const { data, error } = await supabase.from("customers").select("*").order("name");
+      if (!error) setCustomers(data as any[]);
+    };
+    const fetchServices = async () => {
+      const { data, error } = await supabase.from("services").select("*").order("name");
+      if (!error) setServices(data as any[]);
+    };
+
+    fetchCustomers();
+    fetchServices();
+
+    const customerChannel = supabase.channel('customers_billing').on('postgres_changes', { event: '*', schema: 'public', table: 'customers' }, fetchCustomers).subscribe();
+    const serviceChannel = supabase.channel('services_billing').on('postgres_changes', { event: '*', schema: 'public', table: 'services' }, fetchServices).subscribe();
+
     return () => {
-      unsubCustomers();
-      unsubServices();
+      supabase.removeChannel(customerChannel);
+      supabase.removeChannel(serviceChannel);
     };
   }, []);
 
@@ -209,32 +206,41 @@ export default function Billing() {
       const customer = customers.find(c => c.id === selectedCustomer);
       
       const invoiceData = {
-        invoiceNo,
-        customerId: selectedCustomer,
-        customerName: customer?.name || "Unknown",
+        invoice_no: invoiceNo,
+        customer_id: selectedCustomer,
+        customer_name: customer?.name || "Unknown",
         date: new Date().toISOString(),
         amount: total,
         status: paymentMethod === 'not_paid' ? 'Pending' : 'Paid',
         method: paymentMethod,
-        items: selectedServices,
+        items: JSON.stringify(selectedServices),
         discount,
-        taxAmount,
+        tax_amount: taxAmount,
         subtotal,
-        createdAt: serverTimestamp(),
       };
 
-      const docRef = await addDoc(collection(db, "invoices"), invoiceData);
-      setGeneratedInvoiceId(docRef.id);
+      const { data: invData, error: invError } = await supabase.from("invoices").insert(invoiceData).select().single();
+      if (invError) throw invError;
+      
+      setGeneratedInvoiceId(invData.id);
 
       // Update customer stats
-      const customerRef = doc(db, "customers", selectedCustomer);
-      await updateDoc(customerRef, {
-        totalSpent: increment(total),
-        billsCount: increment(1),
-        outstanding: increment(paymentMethod === 'not_paid' ? total : 0),
-        totalPaid: increment(paymentMethod !== 'not_paid' ? total : 0),
-        lastVisit: new Date().toISOString()
-      });
+      const { data: currentCustomer, error: fetchErr } = await supabase
+        .from("customers")
+        .select("total_spent, bills_count, outstanding, total_paid")
+        .eq("id", selectedCustomer)
+        .single();
+
+      if (!fetchErr && currentCustomer) {
+        const isNotPaid = paymentMethod === 'not_paid';
+        await supabase.from("customers").update({
+          total_spent: (currentCustomer.total_spent || 0) + total,
+          bills_count: (currentCustomer.bills_count || 0) + 1,
+          outstanding: (currentCustomer.outstanding || 0) + (isNotPaid ? total : 0),
+          total_paid: (currentCustomer.total_paid || 0) + (!isNotPaid ? total : 0),
+          last_visit: new Date().toISOString()
+        }).eq("id", selectedCustomer);
+      }
 
       setShowBillDialog(true);
       if (paymentMethod === 'not_paid') {
@@ -244,9 +250,9 @@ export default function Billing() {
       } else {
         toast.success("Bill generated successfully!");
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error generating bill:", error);
-      toast.error("Failed to generate bill");
+      toast.error("Failed to generate bill", { description: error.message });
     } finally {
       setIsGenerating(false);
     }
@@ -259,20 +265,24 @@ export default function Billing() {
     }
     setIsAddingCustomer(true);
     try {
-      const docRef = await addDoc(collection(db, "customers"), {
-        ...newCustomer,
+      const customerData: any = {
+        name: newCustomer.name,
+        mobile: newCustomer.mobile,
         outstanding: 0,
-        totalSpent: 0,
-        totalPaid: 0,
-        billsCount: 0,
-        createdAt: serverTimestamp(),
-      });
-      setSelectedCustomer(docRef.id);
+        total_spent: 0,
+        total_paid: 0,
+        bills_count: 0,
+      };
+
+      const { data, error } = await supabase.from("customers").insert(customerData).select().single();
+      if (error) throw error;
+
+      setSelectedCustomer(data.id);
       setShowAddCustomerDialog(false);
       setNewCustomer({ name: "", mobile: "" });
       toast.success("Customer added and selected");
-    } catch (error) {
-      toast.error("Failed to add customer");
+    } catch (error: any) {
+      toast.error("Failed to add customer", { description: error.message });
     } finally {
       setIsAddingCustomer(false);
     }
@@ -668,7 +678,7 @@ export default function Billing() {
           <div className="bg-blue-600 p-6 text-white flex justify-between items-center">
             <div>
               <DialogTitle className="text-xl">Invoice Generated</DialogTitle>
-              <p className="text-blue-100 text-sm mt-1">#INV-2024-001 • {new Date().toLocaleDateString()}</p>
+              <p className="text-blue-100 text-sm mt-1">#{generatedInvoiceId ? generatedInvoiceId.slice(-6) : 'NEW'} • {new Date().toLocaleDateString()}</p>
             </div>
             <div className="bg-white/20 p-2 rounded-lg">
               <Receipt className="w-8 h-8" />

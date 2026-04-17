@@ -42,17 +42,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import { 
-  collection, 
-  onSnapshot, 
-  addDoc, 
-  query, 
-  orderBy, 
-  serverTimestamp,
-  deleteDoc,
-  doc
-} from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { supabase } from "@/lib/supabase";
 import { 
   Dialog, 
   DialogContent, 
@@ -70,8 +60,8 @@ interface Customer {
   email?: string;
   address?: string;
   outstanding: number;
-  totalSpent: number;
-  billsCount: number;
+  total_spent: number;
+  bills_count: number;
   history?: any[];
 }
 
@@ -89,18 +79,32 @@ export default function Customers() {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
-    const q = query(collection(db, "customers"), orderBy("createdAt", "desc"));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const customerData = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as Customer[];
-      setCustomers(customerData);
-    }, (error) => {
-      console.error("Firestore Error:", error);
-      toast.error("Failed to load customers");
-    });
-    return () => unsubscribe();
+    const fetchCustomers = async () => {
+      const { data, error } = await supabase
+        .from("customers")
+        .select("*")
+        .order("created_at", { ascending: false });
+      
+      if (error) {
+        console.error("Supabase Error:", error);
+        toast.error("Failed to load customers");
+      } else {
+        setCustomers(data as any[]);
+      }
+    };
+
+    fetchCustomers();
+
+    const channel = supabase
+      .channel('customers_realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'customers' }, () => {
+        fetchCustomers();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   const selectedCustomer = useMemo(() => 
@@ -120,20 +124,27 @@ export default function Customers() {
     }
     setIsSubmitting(true);
     try {
-      await addDoc(collection(db, "customers"), {
-        ...newCustomer,
+      const customerData: any = {
+        name: newCustomer.name,
+        mobile: newCustomer.mobile,
         outstanding: 0,
-        totalSpent: 0,
-        totalPaid: 0,
-        billsCount: 0,
-        createdAt: serverTimestamp(),
-      });
+        total_spent: 0,
+        total_paid: 0,
+        bills_count: 0,
+      };
+
+      if (newCustomer.email) customerData.email = newCustomer.email;
+      if (newCustomer.address) customerData.address = newCustomer.address;
+
+      const { error } = await supabase.from("customers").insert(customerData);
+      if (error) throw error;
+      
       toast.success("Customer added successfully");
       setShowAddDialog(false);
       setNewCustomer({ name: "", mobile: "", email: "", address: "" });
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error adding customer:", error);
-      toast.error("Failed to add customer");
+      toast.error("Failed to add customer", { description: error.message });
     } finally {
       setIsSubmitting(false);
     }
@@ -142,10 +153,11 @@ export default function Customers() {
   const handleDeleteCustomer = async (id: string) => {
     if (!confirm("Are you sure you want to delete this customer?")) return;
     try {
-      await deleteDoc(doc(db, "customers", id));
+      const { error } = await supabase.from("customers").delete().eq("id", id);
+      if (error) throw error;
       toast.success("Customer deleted");
-    } catch (error) {
-      toast.error("Failed to delete customer");
+    } catch (error: any) {
+      toast.error("Failed to delete customer", { description: error.message });
     }
   };
 
@@ -176,19 +188,19 @@ export default function Customers() {
           <Card className="border-none shadow-sm bg-blue-600 text-white">
             <CardContent className="p-4">
               <p className="text-xs text-blue-100 font-bold uppercase tracking-wider">Total Services</p>
-              <h3 className="text-2xl font-bold mt-1">{selectedCustomer.bills}</h3>
+              <h3 className="text-2xl font-bold mt-1">{selectedCustomer.bills_count}</h3>
             </CardContent>
           </Card>
           <Card className="border-none shadow-sm">
             <CardContent className="p-4">
               <p className="text-xs text-gray-500 font-bold uppercase tracking-wider">Total Debit</p>
-              <h3 className="text-2xl font-bold mt-1 text-gray-900">₹{selectedCustomer.totalSpent}</h3>
+              <h3 className="text-2xl font-bold mt-1 text-gray-900">₹{selectedCustomer.total_spent}</h3>
             </CardContent>
           </Card>
           <Card className="border-none shadow-sm">
             <CardContent className="p-4">
               <p className="text-xs text-gray-500 font-bold uppercase tracking-wider">Total Credit</p>
-              <h3 className="text-2xl font-bold mt-1 text-green-600">₹{selectedCustomer.totalPaid || 0}</h3>
+              <h3 className="text-2xl font-bold mt-1 text-green-600">₹{selectedCustomer.total_paid || 0}</h3>
             </CardContent>
           </Card>
           <Card className="border-none shadow-sm bg-red-50 border border-red-100">
@@ -392,11 +404,11 @@ export default function Customers() {
                     </TableCell>
                     <TableCell>
                       <Badge variant="secondary" className="bg-gray-100 text-gray-700 hover:bg-gray-100">
-                        {customer.bills} Bills
+                        {customer.bills_count} Bills
                       </Badge>
                     </TableCell>
                     <TableCell>
-                      <p className="font-bold text-gray-900">₹{customer.totalSpent}</p>
+                      <p className="font-bold text-gray-900">₹{customer.total_spent}</p>
                     </TableCell>
                     <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
                       <DropdownMenu>

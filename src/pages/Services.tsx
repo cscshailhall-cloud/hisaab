@@ -12,17 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { toast } from "sonner";
-import { 
-  collection, 
-  onSnapshot, 
-  addDoc, 
-  deleteDoc, 
-  doc, 
-  query, 
-  orderBy,
-  serverTimestamp 
-} from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { supabase } from "@/lib/supabase";
 import { 
   Dialog, 
   DialogContent, 
@@ -48,11 +38,31 @@ export default function Services() {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
-    const q = query(collection(db, "services"), orderBy("createdAt", "desc"));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      setServices(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Service)));
-    });
-    return () => unsubscribe();
+    const fetchServices = async () => {
+      const { data, error } = await supabase
+        .from("services")
+        .select("*")
+        .order("created_at", { ascending: false });
+      
+      if (error) {
+        console.error("Supabase Error:", error);
+      } else {
+        setServices(data as Service[]);
+      }
+    };
+
+    fetchServices();
+
+    const channel = supabase
+      .channel('services_realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'services' }, () => {
+        fetchServices();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   const filteredServices = services.filter(s => 
@@ -67,16 +77,18 @@ export default function Services() {
     }
     setIsSubmitting(true);
     try {
-      await addDoc(collection(db, "services"), {
-        ...newService,
+      const { error } = await supabase.from("services").insert({
+        name: newService.name,
         price: parseFloat(newService.price),
-        createdAt: serverTimestamp(),
+        category: newService.category,
       });
+      if (error) throw error;
+      
       toast.success("Service added successfully");
       setShowAddDialog(false);
       setNewService({ name: "", price: "", category: "" });
-    } catch (error) {
-      toast.error("Failed to add service");
+    } catch (error: any) {
+      toast.error("Failed to add service", { description: error.message });
     } finally {
       setIsSubmitting(false);
     }
@@ -85,10 +97,11 @@ export default function Services() {
   const handleDeleteService = async (id: string) => {
     if (!confirm("Delete this service?")) return;
     try {
-      await deleteDoc(doc(db, "services", id));
+      const { error } = await supabase.from("services").delete().eq("id", id);
+      if (error) throw error;
       toast.success("Service deleted");
-    } catch (error) {
-      toast.error("Failed to delete service");
+    } catch (error: any) {
+      toast.error("Failed to delete service", { description: error.message });
     }
   };
 

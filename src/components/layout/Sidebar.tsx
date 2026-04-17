@@ -7,6 +7,7 @@ import {
   Wallet, 
   Package, 
   UserCog, 
+  User,
   BarChart3, 
   Settings, 
   MessageSquare,
@@ -27,6 +28,7 @@ const menuItems = [
   { icon: UserCog, label: "Staff", path: "/staff" },
   { icon: BarChart3, label: "Reports", path: "/reports" },
   { icon: MessageSquare, label: "WhatsApp", path: "/whatsapp" },
+  { icon: User, label: "Profile", path: "/profile" },
   { icon: Settings, label: "Settings", path: "/settings" },
 ];
 

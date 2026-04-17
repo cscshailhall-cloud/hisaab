@@ -13,7 +13,8 @@ import { useAuth } from "@/context/AuthContext";
 import { logout } from "@/lib/firebase";
 
 export function Navbar() {
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
+  const displayName = profile?.full_name || user?.displayName || "Admin User";
 
   return (
     <header className="h-16 bg-white border-bottom border-gray-200 flex items-center justify-between px-8 sticky top-0 z-10">
@@ -36,13 +37,13 @@ export function Navbar() {
         <DropdownMenu>
           <DropdownMenuTrigger className="flex items-center gap-3 pl-2 hover:bg-gray-50 rounded-lg transition-colors">
             <span className="text-right hidden sm:block">
-              <span className="block text-sm font-medium text-gray-900">{user?.displayName || "Admin User"}</span>
+              <span className="block text-sm font-medium text-gray-900">{displayName}</span>
               <span className="block text-xs text-gray-500">{user?.email}</span>
             </span>
             <Avatar className="w-9 h-9 border border-gray-200">
-              <AvatarImage src={user?.photoURL || ""} />
+              <AvatarImage src={profile?.avatar_url || user?.photoURL || ""} />
               <AvatarFallback className="bg-blue-100 text-blue-700 font-medium">
-                {user?.displayName?.split(' ').map(n => n[0]).join('') || "AD"}
+                {displayName?.split(' ').map((n: string) => n[0]).join('') || "AD"}
               </AvatarFallback>
             </Avatar>
           </DropdownMenuTrigger>

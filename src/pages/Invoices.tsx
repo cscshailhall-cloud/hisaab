@@ -47,20 +47,12 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { 
-  collection, 
-  onSnapshot, 
-  query, 
-  orderBy, 
-  deleteDoc, 
-  doc 
-} from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { supabase } from "@/lib/supabase";
 
 interface Invoice {
   id: string;
-  invoiceNo: string;
-  customerName: string;
+  invoice_no: string;
+  customer_name: string;
   date: string;
   amount: number;
   status: string;
@@ -74,17 +66,37 @@ export default function Invoices() {
   const [showPreview, setShowPreview] = useState(false);
 
   useEffect(() => {
-    const q = query(collection(db, "invoices"), orderBy("createdAt", "desc"));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      setInvoices(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Invoice)));
-    });
-    return () => unsubscribe();
+    const fetchInvoices = async () => {
+      const { data, error } = await supabase
+        .from("invoices")
+        .select("*")
+        .order("created_at", { ascending: false });
+      
+      if (error) {
+        console.error("Supabase Error:", error);
+      } else {
+        setInvoices(data as Invoice[]);
+      }
+    };
+
+    fetchInvoices();
+
+    const channel = supabase
+      .channel('invoices_realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'invoices' }, () => {
+        fetchInvoices();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   const filteredInvoices = useMemo(() => {
     return invoices.filter(invoice => 
-      invoice.invoiceNo?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      invoice.customerName?.toLowerCase().includes(searchTerm.toLowerCase())
+      invoice.invoice_no?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      invoice.customer_name?.toLowerCase().includes(searchTerm.toLowerCase())
     );
   }, [searchTerm, invoices]);
 
@@ -108,23 +120,24 @@ export default function Invoices() {
         setShowPreview(true);
         break;
       case "download":
-        toast.success(`Downloading ${invoice.invoiceNo}...`);
+        toast.success(`Downloading ${invoice.invoice_no}...`);
         break;
       case "share":
-        toast.success(`Sharing ${invoice.invoiceNo} via WhatsApp...`);
+        toast.success(`Sharing ${invoice.invoice_no} via WhatsApp...`);
         break;
       case "delete":
-        if (confirm(`Are you sure you want to delete ${invoice.invoiceNo}?`)) {
+        if (confirm(`Are you sure you want to delete ${invoice.invoice_no}?`)) {
           try {
-            await deleteDoc(doc(db, "invoices", invoice.id));
+            const { error } = await supabase.from("invoices").delete().eq("id", invoice.id);
+            if (error) throw error;
             toast.success("Invoice deleted");
-          } catch (error) {
-            toast.error("Failed to delete invoice");
+          } catch (error: any) {
+            toast.error("Failed to delete invoice", { description: error.message });
           }
         }
         break;
       case "edit":
-        toast.info(`Editing ${invoice.invoiceNo}...`);
+        toast.info(`Editing ${invoice.invoice_no}...`);
         break;
     }
   };
@@ -204,8 +217,8 @@ export default function Invoices() {
               <TableBody>
                 {filteredInvoices.map((invoice) => (
                   <TableRow key={invoice.id} className="hover:bg-gray-50 transition-colors">
-                    <TableCell className="font-medium text-blue-600">{invoice.invoiceNo}</TableCell>
-                    <TableCell className="font-medium">{invoice.customerName}</TableCell>
+                    <TableCell className="font-medium text-blue-600">{invoice.invoice_no}</TableCell>
+                    <TableCell className="font-medium">{invoice.customer_name}</TableCell>
                     <TableCell className="text-gray-500">{new Date(invoice.date).toLocaleDateString()}</TableCell>
                     <TableCell className="font-bold">₹{invoice.amount}</TableCell>
                     <TableCell>{getStatusBadge(invoice.status)}</TableCell>
@@ -260,7 +273,7 @@ export default function Invoices() {
           <div className="bg-blue-600 p-6 text-white flex justify-between items-center">
             <div>
               <DialogTitle className="text-xl">Invoice Preview</DialogTitle>
-              <p className="text-blue-100 text-sm mt-1">{selectedInvoice?.invoiceNo} • {selectedInvoice?.date ? new Date(selectedInvoice.date).toLocaleDateString() : ''}</p>
+              <p className="text-blue-100 text-sm mt-1">{selectedInvoice?.invoice_no} • {selectedInvoice?.date ? new Date(selectedInvoice.date).toLocaleDateString() : ''}</p>
             </div>
             <div className="bg-white/20 p-2 rounded-lg">
               <FileText className="w-8 h-8" />
@@ -271,7 +284,7 @@ export default function Invoices() {
             <div className="flex justify-between items-start">
               <div>
                 <Label className="text-xs text-gray-400 uppercase font-bold">Customer</Label>
-                <p className="font-bold text-gray-900">{selectedInvoice?.customerName}</p>
+                <p className="font-bold text-gray-900">{selectedInvoice?.customer_name}</p>
               </div>
               <div className="text-right">
                 <Label className="text-xs text-gray-400 uppercase font-bold">Total Amount</Label>
