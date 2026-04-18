@@ -43,28 +43,29 @@ export default function Login() {
             data: {
               full_name: fullName,
               phone: mobile,
-              shop_name: shopName
+              shop_name: shopName,
+              address: address
             }
           }
         });
         
         if (error) throw error;
 
-        // If email confirmation is off, data.user will exist
-        if (data.user) {
-          // Trigger handled profile creation, but manual upsert ensures immediate consistency
+        // If a session exists, we are already logged in (email confirmation disabled)
+        if (data.session) {
+          toast.success("Account created successfully!");
+          // Attempt to upsert profile, ignore error if it fails (e.g., if trigger already did it or RLS blocked)
           await supabase.from('profiles').upsert({
-            id: data.user.id,
+            id: data.user!.id,
             email,
             full_name: fullName,
             phone: mobile,
             shop_name: shopName,
             address,
             updated_at: new Date().toISOString()
-          });
-          toast.success("Account created successfully!");
-        } else {
-          toast.success("Check your email for confirmation!");
+          }).catch(console.error);
+        } else if (data.user) {
+          toast.success("Account created! Please check your email for confirmation.");
         }
       }
     } catch (error: any) {
