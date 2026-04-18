@@ -1,3 +1,4 @@
+import { QRCodeSVG } from 'qrcode.react';
 import React from "react";
 import { 
   CheckCircle2, 
@@ -6,8 +7,7 @@ import {
   Phone, 
   Mail, 
   Calendar, 
-  Receipt,
-  QrCode
+  Receipt
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -16,7 +16,7 @@ export interface InvoiceItem {
   name: string;
   price: number;
   quantity: number;
-  tax: number;
+  discount?: number;
 }
 
 export interface InvoiceData {
@@ -27,7 +27,7 @@ export interface InvoiceData {
   customer_address?: string;
   items: InvoiceItem[];
   subtotal: number;
-  tax_amount: number;
+  tax_amount?: number;
   discount: number;
   total: number;
   status: string;
@@ -100,6 +100,7 @@ export const ModernTemplate = ({ data, accentColor = "#2563eb", showLogo = true,
               <th className="py-3 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Service Item</th>
               <th className="py-3 text-[10px] font-bold text-gray-400 uppercase tracking-widest text-center">Qty</th>
               <th className="py-3 text-[10px] font-bold text-gray-400 uppercase tracking-widest text-right">Price</th>
+              <th className="py-3 text-[10px] font-bold text-gray-400 uppercase tracking-widest text-right">Discount</th>
               <th className="py-3 text-[10px] font-bold text-gray-400 uppercase tracking-widest text-right">Total</th>
             </tr>
           </thead>
@@ -107,12 +108,14 @@ export const ModernTemplate = ({ data, accentColor = "#2563eb", showLogo = true,
             {data.items.map((item, i) => (
               <tr key={i} className="group hover:bg-gray-50/50 transition-colors">
                 <td className="py-4">
-                  <p className="font-bold text-gray-900">{item.name}</p>
-                  <p className="text-[10px] text-gray-400 font-medium">GST {item.tax}% included</p>
+                  <p className="font-bold text-gray-900">{item.name || "Unknown Item"}</p>
                 </td>
-                <td className="py-4 text-center font-medium">{item.quantity}</td>
-                <td className="py-4 text-right font-medium">₹{item.price.toFixed(2)}</td>
-                <td className="py-4 text-right font-bold">₹{(item.price * item.quantity).toFixed(2)}</td>
+                <td className="py-4 text-center font-medium">{item.quantity || 1}</td>
+                <td className="py-4 text-right font-medium">₹{(item.price || 0).toFixed(2)}</td>
+                <td className="py-4 text-right font-medium text-red-500">
+                  {item.discount ? `-₹${item.discount.toFixed(2)}` : "-"}
+                </td>
+                <td className="py-4 text-right font-bold">₹{(((item.price || 0) * (item.quantity || 1)) - (item.discount || 0)).toFixed(2)}</td>
               </tr>
             ))}
           </tbody>
@@ -123,12 +126,15 @@ export const ModernTemplate = ({ data, accentColor = "#2563eb", showLogo = true,
       <div className="mt-10 border-t pt-8">
         <div className="flex justify-between items-start">
           <div className="max-w-[15.625rem] space-y-4">
-            {showQR && (
-              <div className="p-3 bg-gray-50 rounded-xl border border-gray-100 inline-block">
-                <div className="w-24 h-24 bg-white rounded-lg flex items-center justify-center p-1 border">
-                  <QrCode className="w-full h-full text-gray-900" strokeWidth={1} />
+            {showQR && data.upi_id && (
+              <div className="p-2 bg-gray-50 rounded-xl border border-gray-100 inline-block">
+                <div className="bg-white rounded-lg p-1 border">
+                  <QRCodeSVG 
+                    value={`upi://pay?pa=${data.upi_id}&pn=${encodeURIComponent(data.business_name || 'CSC Billing')}&am=${data.total}&tn=${encodeURIComponent(data.invoice_no)}`} 
+                    size={80} 
+                  />
                 </div>
-                <p className="text-[10px] font-bold text-center text-gray-400 mt-2 uppercase tracking-tighter">Scan to Pay</p>
+                <p className="text-[10px] font-bold text-center text-gray-400 mt-2 uppercase tracking-tighter">Pay via UPI</p>
               </div>
             )}
             <div className="space-y-1">
@@ -142,21 +148,21 @@ export const ModernTemplate = ({ data, accentColor = "#2563eb", showLogo = true,
           <div className="w-64 space-y-3">
             <div className="flex justify-between text-sm">
               <span className="text-gray-500 font-medium">Subtotal</span>
-              <span className="font-bold">₹{data.subtotal.toFixed(2)}</span>
+              <span className="font-bold">₹{(data.subtotal || 0).toFixed(2)}</span>
             </div>
             <div className="flex justify-between text-sm">
               <span className="text-gray-500 font-medium">Tax Allocation</span>
-              <span className="font-bold text-green-600">+₹{data.tax_amount.toFixed(2)}</span>
+              <span className="font-bold text-green-600">+₹{(data.tax_amount || 0).toFixed(2)}</span>
             </div>
             {data.discount > 0 && (
               <div className="flex justify-between text-sm">
                 <span className="text-gray-500 font-medium">Discount</span>
-                <span className="font-bold text-red-500">-₹{data.discount.toFixed(2)}</span>
+                <span className="font-bold text-red-500">-₹{(data.discount || 0).toFixed(2)}</span>
               </div>
             )}
             <div className="flex justify-between pt-3 border-t-2" style={{ borderColor: accentColor }}>
               <span className="text-lg font-black uppercase tracking-tight" style={{ color: accentColor }}>Grand Total</span>
-              <span className="text-lg font-black">₹{data.total.toFixed(2)}</span>
+              <span className="text-lg font-black">₹{(data.total || 0).toFixed(2)}</span>
             </div>
           </div>
         </div>
@@ -218,12 +224,12 @@ export const ClassicTemplate = ({ data, showLogo = true }: TemplateProps) => {
             {data.items.map((item, i) => (
               <tr key={i} className="border-b border-gray-100 last:border-none">
                 <td className="py-5">
-                  <p className="text-base font-bold">{item.name}</p>
+                  <p className="text-base font-bold">{item.name || "Unknown Item"}</p>
                   <p className="text-xs text-gray-500 italic">Service Charge / Goods Unit</p>
                 </td>
-                <td className="py-5 text-center">{item.quantity}</td>
-                <td className="py-5 text-right">₹{item.price.toFixed(2)}</td>
-                <td className="py-5 text-right font-bold">₹{(item.price * item.quantity).toFixed(2)}</td>
+                <td className="py-5 text-center">{item.quantity || 1}</td>
+                <td className="py-5 text-right">₹{(item.price || 0).toFixed(2)}</td>
+                <td className="py-5 text-right font-bold">₹{(((item.price || 0) * (item.quantity || 1)) - (item.discount || 0)).toFixed(2)}</td>
               </tr>
             ))}
           </tbody>
@@ -236,10 +242,12 @@ export const ClassicTemplate = ({ data, showLogo = true }: TemplateProps) => {
             <span className="text-gray-600 font-medium italic">Basic Amount</span>
             <span className="font-bold">₹{data.subtotal.toFixed(2)}</span>
           </div>
-          <div className="flex justify-between border-b pb-2">
-            <span className="text-gray-600 font-medium italic">Taxes & Levies</span>
-            <span className="font-bold">₹{data.tax_amount.toFixed(2)}</span>
-          </div>
+          {data.discount > 0 && (
+            <div className="flex justify-between border-b pb-2">
+              <span className="text-gray-600 font-medium italic">Global Discount</span>
+              <span className="font-bold text-red-500">-₹{data.discount.toFixed(2)}</span>
+            </div>
+          )}
           <div className="flex justify-between pt-4">
             <span className="text-2xl font-bold italic tracking-tighter">Grand Total Due</span>
             <span className="text-2xl font-bold">₹{data.total.toFixed(2)}</span>
@@ -290,11 +298,11 @@ export const MinimalTemplate = ({ data }: TemplateProps) => {
           {data.items.map((item, i) => (
             <div key={i} className="grid grid-cols-12 items-start">
               <div className="col-span-8">
-                <p className="text-sm font-medium">{item.name}</p>
-                <p className="text-[10px] text-gray-400 mt-0.5">Rate: ₹{item.price.toFixed(2)}</p>
+                <p className="text-sm font-medium">{item.name || "Unknown Item"}</p>
+                <p className="text-[10px] text-gray-400 mt-0.5">Rate: ₹{(item.price || 0).toFixed(2)}{item.discount ? ` | Discount: -₹${item.discount.toFixed(2)}` : ''}</p>
               </div>
-              <div className="col-span-1 text-center text-sm font-light">{item.quantity}</div>
-              <div className="col-span-3 text-right text-sm font-bold">₹{(item.price * item.quantity).toFixed(2)}</div>
+              <div className="col-span-1 text-center text-sm font-light">{item.quantity || 1}</div>
+              <div className="col-span-3 text-right text-sm font-bold">₹{(((item.price || 0) * (item.quantity || 1)) - (item.discount || 0)).toFixed(2)}</div>
             </div>
           ))}
         </div>
@@ -306,6 +314,12 @@ export const MinimalTemplate = ({ data }: TemplateProps) => {
             <span className="text-[10px] font-bold text-gray-300 uppercase tracking-[0.2em]">Subtotal</span>
             <span className="text-sm font-light">₹{data.subtotal.toFixed(2)}</span>
           </div>
+          {data.discount > 0 && (
+            <div className="flex justify-between items-center">
+              <span className="text-[10px] font-bold text-gray-300 uppercase tracking-[0.2em]">Discount</span>
+              <span className="text-sm font-light text-red-500">-₹{data.discount.toFixed(2)}</span>
+            </div>
+          )}
           <div className="flex justify-between items-center">
             <span className="text-[10px] font-bold text-gray-300 uppercase tracking-[0.2em]">Total</span>
             <span className="text-2xl font-light">₹{data.total.toFixed(2)}</span>

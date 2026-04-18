@@ -80,8 +80,10 @@ interface SelectedService {
   id: string;
   name: string;
   price: number;
+  cost: number;
+  type: 'service' | 'inventory';
   quantity: number;
-  tax: number;
+  discount: number;
 }
 
 export default function Billing() {
@@ -92,16 +94,22 @@ export default function Billing() {
   const [customerSearch, setCustomerSearch] = useState("");
   const [serviceSearch, setServiceSearch] = useState("");
   const [selectedServices, setSelectedServices] = useState<SelectedService[]>([]);
-  const [discount, setDiscount] = useState<number>(0);
+  const [discount, setDiscount] = useState<number>(0); // Keeping global discount logic if user still needs it, but item-wise available
   const [paymentMethod, setPaymentMethod] = useState<string>("cash");
   const [isGenerating, setIsGenerating] = useState(false);
   const [showBillDialog, setShowBillDialog] = useState(false);
-  const [tempSelectedServices, setTempSelectedServices] = useState<string[]>([]);
   const [generatedInvoiceId, setGeneratedInvoiceId] = useState("");
   const [showAddCustomerDialog, setShowAddCustomerDialog] = useState(false);
   const [newCustomer, setNewCustomer] = useState({ name: "", mobile: "" });
   const [isAddingCustomer, setIsAddingCustomer] = useState(false);
   const [config, setConfig] = useState<any>(null);
+  
+  const [inventory, setInventory] = useState<any[]>([]);
+  const [latestInvoiceNo, setLatestInvoiceNo] = useState<number>(0);
+
+  // Metadata overrides for the final invoice
+  const [customInvoiceNo, setCustomInvoiceNo] = useState("");
+  const [customDate, setCustomDate] = useState(() => new Date().toISOString().split('T')[0]);
 
   useEffect(() => {
     const fetchCustomers = async () => {
@@ -112,21 +120,43 @@ export default function Billing() {
       const { data, error } = await supabase.from("services").select("*").order("name");
       if (!error) setServices(data as any[]);
     };
+    const fetchInventory = async () => {
+      const { data, error } = await supabase.from("inventory").select("*").order("name");
+      if (!error) setInventory(data as any[]);
+    };
     const fetchConfig = async () => {
       const { data } = await supabase.from('app_configurations').select('*').maybeSingle();
       if (data) setConfig(data);
     };
 
+    const fetchLatestInvoice = async () => {
+      const { data, error } = await supabase
+        .from("invoices")
+        .select("invoice_no")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (!error && data?.invoice_no) {
+        const numPart = data.invoice_no.replace(/\D/g, '');
+        setLatestInvoiceNo(parseInt(numPart) || 0);
+      }
+    };
+
     fetchCustomers();
     fetchServices();
+    fetchInventory();
     fetchConfig();
+    fetchLatestInvoice();
 
     const customerChannel = supabase.channel('customers_billing').on('postgres_changes', { event: '*', schema: 'public', table: 'customers' }, fetchCustomers).subscribe();
     const serviceChannel = supabase.channel('services_billing').on('postgres_changes', { event: '*', schema: 'public', table: 'services' }, fetchServices).subscribe();
+    const inventoryChannel = supabase.channel('inventory_billing').on('postgres_changes', { event: '*', schema: 'public', table: 'inventory' }, fetchInventory).subscribe();
 
     return () => {
       supabase.removeChannel(customerChannel);
       supabase.removeChannel(serviceChannel);
+      supabase.removeChannel(inventoryChannel);
     };
   }, []);
 
@@ -137,51 +167,79 @@ export default function Billing() {
     );
   }, [customerSearch, customers]);
 
-  const filteredServices = useMemo(() => {
-    return services.filter(s => 
-      s.name.toLowerCase().includes(serviceSearch.toLowerCase()) || 
-      s.category.toLowerCase().includes(serviceSearch.toLowerCase())
+  const billableItems = useMemo(() => {
+    const s = services.map(srv => ({
+      id: srv.id,
+      name: srv.name,
+      price: (srv as any).mrp_rate ?? srv.price ?? 0,
+      cost: (srv as any).fee ?? 0,
+      category: srv.category,
+      type: 'service' as const
+    }));
+    const i = inventory.map(inv => ({
+      id: inv.id,
+      name: inv.name,
+      price: inv.selling_price ?? inv.price ?? 0,
+      cost: inv.purchase_price ?? 0,
+      category: 'Inventory',
+      type: 'inventory' as const
+    }));
+    return [...s, ...i];
+  }, [services, inventory]);
+
+  const filteredBillableItems = useMemo(() => {
+    return billableItems.filter(item => 
+      item.name.toLowerCase().includes(serviceSearch.toLowerCase()) || 
+      item.category.toLowerCase().includes(serviceSearch.toLowerCase())
     );
-  }, [serviceSearch, services]);
+  }, [serviceSearch, billableItems]);
 
   const subtotal = useMemo(() => {
     return selectedServices.reduce((acc, curr) => acc + (curr.price * curr.quantity), 0);
   }, [selectedServices]);
 
-  const taxAmount = useMemo(() => {
-    return selectedServices.reduce((acc, curr) => acc + (curr.price * curr.quantity * (curr.tax / 100)), 0);
+  const itemDiscounts = useMemo(() => {
+    return selectedServices.reduce((acc, curr) => acc + (curr.discount || 0), 0);
   }, [selectedServices]);
 
-  const total = subtotal + taxAmount - discount;
+  const total = subtotal - itemDiscounts - discount;
 
-  const addService = (serviceId: string) => {
-    const service = services.find(s => s.id === serviceId);
-    if (!service) return;
+  const addService = (itemId: string, itemType: 'service' | 'inventory') => {
+    const item = billableItems.find(i => i.id === itemId && i.type === itemType);
+    if (!item) return;
 
-    const existing = selectedServices.find(s => s.id === serviceId);
+    const existing = selectedServices.find(s => s.id === itemId && s.type === itemType);
     if (existing) {
       setSelectedServices(selectedServices.map(s => 
-        s.id === serviceId ? { ...s, quantity: s.quantity + 1 } : s
+        (s.id === itemId && s.type === itemType) ? { ...s, quantity: s.quantity + 1 } : s
       ));
     } else {
       setSelectedServices([...selectedServices, {
-        id: service.id,
-        name: service.name,
-        price: service.price,
+        id: item.id,
+        name: item.name,
+        price: item.price,
+        cost: item.cost,
+        type: item.type,
         quantity: 1,
-        tax: 18 // Default GST
+        discount: 0
       }]);
     }
   };
 
-  const removeService = (serviceId: string) => {
-    setSelectedServices(selectedServices.filter(s => s.id !== serviceId));
+  const removeService = (itemId: string, itemType: 'service' | 'inventory') => {
+    setSelectedServices(selectedServices.filter(s => !(s.id === itemId && s.type === itemType)));
   };
 
-  const updateQuantity = (serviceId: string, quantity: number) => {
+  const updateQuantity = (itemId: string, itemType: 'service' | 'inventory', quantity: number) => {
     if (quantity < 1) return;
     setSelectedServices(selectedServices.map(s => 
-      s.id === serviceId ? { ...s, quantity } : s
+      (s.id === itemId && s.type === itemType) ? { ...s, quantity } : s
+    ));
+  };
+
+  const updateItemDiscount = (itemId: string, itemType: 'service' | 'inventory', discountValue: number) => {
+    setSelectedServices(selectedServices.map(s => 
+      (s.id === itemId && s.type === itemType) ? { ...s, discount: discountValue } : s
     ));
   };
 
@@ -222,16 +280,37 @@ export default function Billing() {
 
     setIsGenerating(true);
     try {
+      // Auto-increment logic
+      const invoiceNumber = customInvoiceNo && customInvoiceNo.trim() !== '' 
+        ? customInvoiceNo.trim() 
+        : `${config?.invoice_prefix || 'INV-'}${(latestInvoiceNo + 1).toString().padStart(6, '0')}`;
+
+      // Map the array to remove tax and ensure discount fits
+      const cleanItems = selectedServices.map(item => ({
+        id: item.id,
+        name: item.name,
+        price: item.price,
+        cost: item.cost,
+        type: item.type,
+        quantity: item.quantity,
+        discount: item.discount || 0
+      }));
+
+      const payload: any = {
+        customer_id: selectedCustomer,
+        total_amount: total,
+        amount: total, // Add this to satisfy not-null constraint
+        payment_method: paymentMethod,
+        status: paymentMethod === 'not_paid' ? 'Pending' : 'Paid',
+        items: cleanItems,
+        discount: discount + itemDiscounts,
+        invoice_no: invoiceNumber,
+        created_at: customDate && customDate.trim() !== '' ? new Date(customDate).toISOString() : new Date().toISOString()
+      };
+
       const { data: invoice, error } = await supabase
         .from("invoices")
-        .insert([{
-          customer_id: selectedCustomer,
-          total_amount: total,
-          payment_method: paymentMethod,
-          status: paymentMethod === 'not_paid' ? 'Pending' : 'Paid',
-          items: selectedServices,
-          discount: discount
-        }])
+        .insert([payload])
         .select()
         .single();
 
@@ -272,32 +351,53 @@ export default function Billing() {
   };
 
   const renderInvoicePreview = () => {
-    if (!selectedCustomer || !config) return null;
+    console.log("Rendering Preview. Customer:", selectedCustomer, "Config:", config);
+    if (!selectedCustomer || !config) {
+        console.warn("Missing customer or config");
+        return null;
+    }
     const customer = customers.find(c => c.id === selectedCustomer);
     
+    // Auto-increment display for preview
+    const overrideInvoiceId = customInvoiceNo && customInvoiceNo.trim() !== '' 
+        ? customInvoiceNo.trim() 
+        : `${config?.invoice_prefix || 'INV-'}${(latestInvoiceNo + 1).toString().padStart(6, '0')}`;
+    
+    const previewItems = selectedServices.map(item => ({
+        id: item.id,
+        name: item.name,
+        price: item.price,
+        quantity: item.quantity,
+        discount: item.discount || 0
+    }));
+
+    const parsedDate = customDate && customDate.trim() !== '' ? new Date(customDate) : new Date();
+    const dateISO = !isNaN(parsedDate.getTime()) ? parsedDate.toISOString() : new Date().toISOString();
+
     const invoiceData: InvoiceData = {
-      invoice_no: generatedInvoiceId ? `${config.invoice_prefix || 'INV-'}${generatedInvoiceId.slice(-6).toUpperCase()}` : "PREVIEW",
-      date: new Date().toISOString(),
+      invoice_no: overrideInvoiceId,
+      date: dateISO,
       customer_name: customer?.name || "Customer",
       customer_phone: customer?.mobile,
-      items: selectedServices,
-      subtotal,
-      tax_amount: taxAmount,
-      discount,
-      total,
+      items: previewItems,
+      subtotal: isNaN(subtotal) ? 0 : subtotal,
+      discount: isNaN(discount + itemDiscounts) ? 0 : discount + itemDiscounts,
+      total: isNaN(total) ? 0 : total,
       status: paymentMethod === 'not_paid' ? 'Pending' : 'Paid',
-      business_name: profile?.shop_name,
-      business_address: profile?.address,
-      business_phone: profile?.phone,
-      business_gst: config?.gst_number
+      business_name: profile?.shop_name || "",
+      business_address: profile?.address || "",
+      business_phone: profile?.phone || "",
+      business_gst: config?.gst_number || ""
     };
+    
+    console.log("Invoice Data for Template:", invoiceData);
 
     const props = {
       data: invoiceData,
-      accentColor: config.accent_color,
-      showLogo: config.show_logo,
-      showQR: config.show_qr,
-      showBank: config.show_bank
+      accentColor: "#2563eb",
+      showLogo: true,
+      showQR: true,
+      showBank: true
     };
 
     if (config.invoice_template === 'classic') return <div id="invoice-preview"><ClassicTemplate {...props} /></div>;
@@ -374,20 +474,23 @@ export default function Billing() {
                 />
               </div>
               <div className="grid grid-cols-1 gap-2 max-h-[200px] overflow-y-auto">
-                {filteredServices.map(service => (
+                {filteredBillableItems.map(item => (
                   <div 
-                    key={service.id}
+                    key={`${item.type}-${item.id}`}
                     className="p-3 rounded-xl border border-gray-100 bg-white hover:border-blue-100 hover:bg-blue-50/30 transition-all flex items-center justify-between group"
                   >
                     <div>
-                      <p className="text-sm font-bold text-gray-900">{service.name}</p>
-                      <p className="text-xs text-blue-600 font-medium">₹{service.price}</p>
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-bold text-gray-900">{item.name}</p>
+                        <Badge variant="outline" className="text-[9px] h-4 leading-none bg-gray-50">{item.type.toUpperCase()}</Badge>
+                      </div>
+                      <p className="text-xs text-blue-600 font-medium">₹{item.price}</p>
                     </div>
                     <Button 
                       size="sm" 
                       variant="ghost" 
                       className="h-8 w-8 p-0 text-blue-600 hover:bg-blue-600 hover:text-white rounded-lg"
-                      onClick={() => addService(service.id)}
+                      onClick={() => addService(item.id, item.type)}
                     >
                       <Plus className="w-4 h-4" />
                     </Button>
@@ -410,7 +513,7 @@ export default function Billing() {
                 <TableHead className="text-xs bg-gray-50/50">Service</TableHead>
                 <TableHead className="text-xs bg-gray-50/50 text-right">Price</TableHead>
                 <TableHead className="text-xs bg-gray-50/50 text-center">Qty</TableHead>
-                <TableHead className="text-xs bg-gray-50/50 text-right">GST</TableHead>
+                <TableHead className="text-xs bg-gray-50/50 text-right">Discount (₹)</TableHead>
                 <TableHead className="text-xs bg-gray-50/50 text-right">Total</TableHead>
                 <TableHead className="text-xs bg-gray-50/50 w-[50px]"></TableHead>
               </TableRow>
@@ -426,25 +529,33 @@ export default function Billing() {
                         variant="outline" 
                         size="sm" 
                         className="h-7 w-7 p-0 rounded-md border-gray-100"
-                        onClick={() => updateQuantity(item.id, item.quantity - 1)}
+                        onClick={() => updateQuantity(item.id, item.type, item.quantity - 1)}
                       >-</Button>
-                      <span className="text-sm font-bold min-w-[20px]">{item.quantity}</span>
+                      <span className="text-sm font-bold min-w-[20px] text-center">{item.quantity}</span>
                       <Button 
                         variant="outline" 
                         size="sm" 
                         className="h-7 w-7 p-0 rounded-md border-gray-100"
-                        onClick={() => updateQuantity(item.id, item.quantity + 1)}
+                        onClick={() => updateQuantity(item.id, item.type, item.quantity + 1)}
                       >+</Button>
                     </div>
                   </TableCell>
-                  <TableCell className="text-right text-xs text-gray-500">{item.tax}%</TableCell>
-                  <TableCell className="text-right font-bold text-sm">₹{(item.price * item.quantity * (1 + item.tax/100)).toFixed(2)}</TableCell>
+                  <TableCell className="text-right">
+                    <Input 
+                      type="number"
+                      className="w-20 h-8 text-right text-sm float-right"
+                      placeholder="0"
+                      value={item.discount || ''}
+                      onChange={(e) => updateItemDiscount(item.id, item.type, Number(e.target.value))}
+                    />
+                  </TableCell>
+                  <TableCell className="text-right font-bold text-sm">₹{((item.price * item.quantity) - (item.discount || 0)).toFixed(2)}</TableCell>
                   <TableCell>
                     <Button 
                       variant="ghost" 
                       size="sm" 
                       className="h-8 w-8 p-0 text-red-500 hover:text-red-600 hover:bg-red-50"
-                      onClick={() => removeService(item.id)}
+                      onClick={() => removeService(item.id, item.type)}
                     >
                       <Trash2 className="w-4 h-4" />
                     </Button>
@@ -473,17 +584,39 @@ export default function Billing() {
             <CardTitle className="text-lg font-bold">Billing Summary</CardTitle>
           </CardHeader>
           <CardContent className="p-6 space-y-6">
-            <div className="space-y-4">
+            
+            <div className="space-y-4 grid grid-cols-2 gap-4">
+              <div className="col-span-2 sm:col-span-1 space-y-2">
+                <Label className="text-xs text-gray-400 uppercase font-bold">Invoice Override</Label>
+                <Input 
+                  placeholder="INV-..." 
+                  value={customInvoiceNo}
+                  onChange={(e) => setCustomInvoiceNo(e.target.value)}
+                  className="h-10 text-sm"
+                />
+              </div>
+              <div className="col-span-2 sm:col-span-1 space-y-2">
+                <Label className="text-xs text-gray-400 uppercase font-bold">Date Override</Label>
+                <Input 
+                  type="date"
+                  value={customDate}
+                  onChange={(e) => setCustomDate(e.target.value)}
+                  className="h-10 text-sm"
+                />
+              </div>
+            </div>
+
+            <div className="space-y-4 pt-4 border-t border-dashed border-gray-100">
               <div className="flex justify-between text-sm">
                 <span className="text-gray-500 font-medium">Subtotal</span>
-                <span className="font-bold">₹{subtotal.toFixed(2)}</span>
+              <span className="font-bold">₹{(subtotal || 0).toFixed(2)}</span>
               </div>
               <div className="flex justify-between text-sm">
-                <span className="text-gray-500 font-medium">Estimated Tax (GST)</span>
-                <span className="font-bold">₹{taxAmount.toFixed(2)}</span>
+                <span className="text-gray-500 font-medium">Item Discounts</span>
+                <span className="font-bold text-green-600">-₹{(itemDiscounts || 0).toFixed(2)}</span>
               </div>
               <div className="pt-3 border-t border-dashed border-gray-200">
-                <Label className="text-xs text-gray-400 uppercase font-bold mb-2 block">Discount (₹)</Label>
+                <Label className="text-xs text-gray-400 uppercase font-bold mb-2 block">Global Discount (₹)</Label>
                 <Input 
                   type="number" 
                   className="h-11 font-bold text-lg text-red-600"
@@ -494,12 +627,21 @@ export default function Billing() {
               <div className="pt-6 border-t border-gray-100">
                 <div className="flex justify-between items-end mb-1">
                   <span className="text-sm font-bold text-gray-900 leading-none">Net Payable</span>
-                  <span className="text-3xl font-black text-blue-600 leading-none">₹{total.toFixed(2)}</span>
+                  <span className="text-3xl font-black text-blue-600 leading-none">₹{(total || 0).toFixed(2)}</span>
                 </div>
               </div>
             </div>
 
+            {/* Live Preview Section */}
+            <div className="pt-6 border-t border-dashed border-gray-200">
+              <Label className="text-xs text-gray-400 uppercase font-bold mb-4 block">Live Preview</Label>
+              <div className="border border-gray-200 rounded-lg overflow-hidden scale-[0.4] origin-top -mt-20 -mb-72">
+                {renderInvoicePreview()}
+              </div>
+            </div>
+
             <div className="space-y-4 pt-6 border-t border-gray-100">
+
               <Label className="text-xs text-gray-400 uppercase font-bold">Payment Mode</Label>
               <div className="grid grid-cols-2 gap-2">
                 {[
@@ -594,7 +736,7 @@ export default function Billing() {
               <div className="flex justify-between items-start">
                 <div>
                   <Label className="text-xs text-gray-400 uppercase font-bold">Total Amount</Label>
-                  <p className="text-2xl font-black text-gray-900">₹{total.toFixed(2)}</p>
+                  <p className="text-2xl font-black text-gray-900">₹{(total || 0).toFixed(2)}</p>
                   <Badge variant={paymentMethod === 'not_paid' ? 'destructive' : 'default'} className="mt-1">
                     {paymentMethod === 'not_paid' ? 'PENDING' : 'PAID'}
                   </Badge>

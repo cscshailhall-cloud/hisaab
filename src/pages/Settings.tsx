@@ -90,15 +90,9 @@ export default function Settings() {
     invoice_prefix: "INV-",
     bill_type: "a4",
     invoice_template: "modern",
-    accent_color: "#2563eb",
-    font_family: "inter",
     whatsapp_provider: "cloud_api",
     whatsapp_phone_id: "",
-    whatsapp_token: "",
-    show_logo: true,
-    show_qr: true,
-    show_bank: true,
-    show_tnc: true
+    whatsapp_token: ""
   });
 
   useEffect(() => {
@@ -124,12 +118,7 @@ export default function Settings() {
         setConfig(prev => ({
           ...prev,
           ...data,
-          invoice_template: data.invoice_template || "modern",
-          accent_color: data.accent_color || "#2563eb",
-          show_logo: data.show_logo ?? true,
-          show_qr: data.show_qr ?? true,
-          show_bank: data.show_bank ?? true,
-          show_tnc: data.show_tnc ?? true
+          invoice_template: data.invoice_template || "modern"
         }));
         if (data.gst_number) setGstNumber(data.gst_number);
       }
@@ -174,12 +163,24 @@ export default function Settings() {
     if (!user) return;
     setIsSaving(true);
     try {
+      // Create a clean config object ensuring we don't send anything the schema isn't expecting
+      const payload = {
+        ...config,
+        ...updates
+      };
+      
+      delete payload.font_family; // Explicitly remove legacy props to stop crashes
+      delete payload.accent_color;
+      delete payload.show_logo;
+      delete payload.show_qr;
+      delete payload.show_bank;
+      delete payload.show_tnc;
+
       const { error } = await supabase
         .from('app_configurations')
         .upsert({
           user_id: user.uid,
-          ...config,
-          ...updates,
+          ...payload,
           updated_at: new Date().toISOString()
         }, { onConflict: 'user_id' });
       
@@ -196,10 +197,10 @@ export default function Settings() {
   const renderTemplate = (id: string, data: InvoiceData, scale: boolean = false) => {
     const props = { 
       data, 
-      accentColor: config.accent_color,
-      showLogo: config.show_logo,
-      showQR: config.show_qr,
-      showBank: config.show_bank
+      accentColor: "#2563eb",
+      showLogo: true,
+      showQR: true,
+      showBank: true
     };
     
     let component;
@@ -240,10 +241,6 @@ export default function Settings() {
           <TabsTrigger value="business" className="px-6 data-[state=active]:bg-blue-50 data-[state=active]:text-blue-600">
             <Building2 className="w-4 h-4 mr-2" />
             Business
-          </TabsTrigger>
-          <TabsTrigger value="branding" className="px-6 data-[state=active]:bg-blue-50 data-[state=active]:text-blue-600">
-            <Palette className="w-4 h-4 mr-2" />
-            Branding
           </TabsTrigger>
           <TabsTrigger value="payments" className="px-6 data-[state=active]:bg-blue-50 data-[state=active]:text-blue-600">
             <CreditCard className="w-4 h-4 mr-2" />
@@ -293,58 +290,6 @@ export default function Settings() {
                   {isSaving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
                   Save Changes
                 </Button>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="branding">
-          <Card className="border-none shadow-sm max-w-3xl">
-            <CardHeader>
-              <CardTitle>Branding & UI</CardTitle>
-              <CardDescription>Customize the look and feel of your dashboard and invoices.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-8">
-              <div className="flex items-center gap-8">
-                <Avatar className="w-24 h-24 rounded-2xl border-2 border-dashed border-gray-200">
-                  <AvatarImage src="" />
-                  <AvatarFallback className="bg-gray-50 text-gray-400">
-                    <Upload className="w-8 h-8" />
-                  </AvatarFallback>
-                </Avatar>
-                <div>
-                  <h4 className="font-bold text-gray-900 mb-1">Business Logo</h4>
-                  <p className="text-sm text-gray-500 mb-3">Recommended size: 512x512px. PNG or JPG.</p>
-                  <Button variant="outline" size="sm">Change Logo</Button>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                <div className="space-y-4">
-                  <Label>Primary Theme Color</Label>
-                  <div className="flex gap-3">
-                    {["#2563eb", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#141414"].map((color) => (
-                      <button 
-                        key={color}
-                        onClick={() => handleSaveConfig({ accent_color: color })}
-                        className={cn(
-                          "w-8 h-8 rounded-full border-2 border-white ring-1 ring-gray-200 transition-transform hover:scale-110",
-                          config.accent_color === color && "ring-blue-600 ring-2 scale-110"
-                        )}
-                        style={{ backgroundColor: color }}
-                      ></button>
-                    ))}
-                  </div>
-                </div>
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <Label>Dark Mode</Label>
-                      <p className="text-xs text-gray-500">Enable dark theme for the dashboard.</p>
-                    </div>
-                    <Switch />
-                  </div>
-                </div>
               </div>
             </CardContent>
           </Card>
@@ -492,18 +437,23 @@ export default function Settings() {
                       onClick={() => handleSaveConfig({ invoice_template: t.id })}
                     >
                       {renderTemplate(t.id, MOCK_INVOICE, true)}
-                      <div className="flex justify-between items-center px-1">
+                      <div className="flex justify-between items-center px-1 pt-2">
                         <div className="space-y-0.5">
                           <p className="text-xs font-bold">{t.name}</p>
                           <p className="text-[10px] text-gray-500 line-clamp-1">{t.desc}</p>
                         </div>
-                        {config.invoice_template === t.id && <CheckCircle2 className="w-4 h-4" />}
+                        <Button 
+                          size="sm" 
+                          variant={config.invoice_template === t.id ? "default" : "outline"}
+                          className={cn("h-7 text-[10px]", config.invoice_template === t.id ? "bg-blue-600" : "")}
+                          onClick={() => handleSaveConfig({ invoice_template: t.id })}
+                        >
+                          {config.invoice_template === t.id ? 'Default' : 'Select'}
+                        </Button>
                       </div>
                       <Dialog>
-                        <DialogTrigger asChild>
-                          <Button variant="ghost" size="icon" className="absolute top-2 right-2 bg-white/90 backdrop-blur shadow-sm opacity-0 group-hover:opacity-100 transition-opacity rounded-full h-8 w-8" onClick={(e) => e.stopPropagation()}>
-                            <Eye className="w-4 h-4" />
-                          </Button>
+                        <DialogTrigger className="absolute top-2 right-2 bg-white/90 backdrop-blur shadow-sm opacity-0 group-hover:opacity-100 transition-opacity rounded-full h-8 w-8 flex items-center justify-center" onClick={(e) => e.stopPropagation()}>
+                          <Eye className="w-4 h-4" />
                         </DialogTrigger>
                         <DialogContent className="max-w-[800px] h-[90vh] overflow-y-auto p-0">
                           {renderTemplate(t.id, MOCK_INVOICE)}
@@ -511,40 +461,6 @@ export default function Settings() {
                       </Dialog>
                     </div>
                   ))}
-                </div>
-              </div>
-
-              <div className="pt-6 border-t">
-                <h4 className="font-bold text-sm mb-4">Invoice Elements</h4>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-6">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-medium">Show Business Logo</p>
-                      <p className="text-xs text-gray-500">Display logo at the top.</p>
-                    </div>
-                    <Switch checked={config.show_logo} onCheckedChange={(val) => handleSaveConfig({ show_logo: val })} />
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-medium">Show Payment QR Code</p>
-                      <p className="text-xs text-gray-500">Add dynamic UPI QR code.</p>
-                    </div>
-                    <Switch checked={config.show_qr} onCheckedChange={(val) => handleSaveConfig({ show_qr: val })} />
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-medium">Show Bank Details</p>
-                      <p className="text-xs text-gray-500">Include account info for NEFT.</p>
-                    </div>
-                    <Switch checked={config.show_bank} onCheckedChange={(val) => handleSaveConfig({ show_bank: val })} />
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-medium">Show Terms & Conditions</p>
-                      <p className="text-xs text-gray-500">Include standard T&C.</p>
-                    </div>
-                    <Switch checked={config.show_tnc} onCheckedChange={(val) => handleSaveConfig({ show_tnc: val })} />
-                  </div>
                 </div>
               </div>
 

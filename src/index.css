@@ -128,3 +128,32 @@
     @apply font-sans;
     }
 }
+
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  #print-container, #print-container * {
+    visibility: visible;
+  }
+  #print-container {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    box-shadow: none;
+    background: transparent !important;
+  }
+  
+  /* Reset some Tailwind dialog styles that block printing */
+  [data-radix-popper-content-wrapper], 
+  [role="dialog"] {
+    position: static !important;
+    transform: none !important;
+    width: 100% !important;
+    height: auto !important;
+    max-width: none !important;
+  }
+}

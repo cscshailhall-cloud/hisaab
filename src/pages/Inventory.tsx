@@ -8,7 +8,8 @@ import {
   ArrowDownRight,
   History,
   MoreVertical,
-  Trash2
+  Trash2,
+  Edit
 } from "lucide-react";
 import { 
   Table, 
@@ -42,7 +43,8 @@ interface InventoryItem {
   unit: string;
   threshold: number;
   status: string;
-  price?: number;
+  purchase_price?: number;
+  selling_price?: number;
 }
 
 export default function Inventory() {
@@ -50,13 +52,15 @@ export default function Inventory() {
   const [searchTerm, setSearchTerm] = useState("");
   const [loading, setLoading] = useState(true);
   const [showAddDialog, setShowAddDialog] = useState(false);
+  const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [newItem, setNewItem] = useState({
     name: "",
     quantity: "",
     unit: "",
     threshold: "",
-    price: ""
+    purchase_price: "",
+    selling_price: ""
   });
 
   const fetchInventory = async () => {
@@ -86,6 +90,19 @@ export default function Inventory() {
     };
   }, []);
 
+  const handleEditClick = (item: InventoryItem) => {
+    setNewItem({
+      name: item.name,
+      quantity: item.quantity.toString(),
+      unit: item.unit,
+      threshold: item.threshold.toString(),
+      purchase_price: (item.purchase_price || 0).toString(),
+      selling_price: (item.selling_price || 0).toString(),
+    });
+    setEditingItemId(item.id);
+    setShowAddDialog(true);
+  };
+
   const handleAddItem = async () => {
     if (!newItem.name || !newItem.quantity || !newItem.unit || !newItem.threshold) {
       toast.error("Please fill all required fields");
@@ -94,22 +111,31 @@ export default function Inventory() {
 
     setIsSubmitting(true);
     try {
-      const { error } = await supabase.from("inventory").insert({
+      const itemData = {
         name: newItem.name,
         quantity: parseInt(newItem.quantity),
         unit: newItem.unit,
         threshold: parseInt(newItem.threshold),
-        price: newItem.price ? parseFloat(newItem.price) : 0,
+        purchase_price: newItem.purchase_price ? parseFloat(newItem.purchase_price) : 0,
+        selling_price: newItem.selling_price ? parseFloat(newItem.selling_price) : 0,
         status: parseInt(newItem.quantity) <= parseInt(newItem.threshold) ? "Low Stock" : "In Stock"
-      });
+      };
 
-      if (error) throw error;
+      if (editingItemId) {
+        const { error } = await supabase.from("inventory").update(itemData).eq("id", editingItemId);
+        if (error) throw error;
+        toast.success("Item updated");
+      } else {
+        const { error } = await supabase.from("inventory").insert(itemData);
+        if (error) throw error;
+        toast.success("Item added to inventory");
+      }
 
-      toast.success("Item added to inventory");
       setShowAddDialog(false);
-      setNewItem({ name: "", quantity: "", unit: "", threshold: "", price: "" });
+      setEditingItemId(null);
+      setNewItem({ name: "", quantity: "", unit: "", threshold: "", purchase_price: "", selling_price: "" });
     } catch (error: any) {
-      toast.error("Failed to add item", { description: error.message });
+      toast.error(editingItemId ? "Failed to update item" : "Failed to add item", { description: error.message });
     } finally {
       setIsSubmitting(false);
     }
@@ -133,7 +159,7 @@ export default function Inventory() {
   const stats = {
     totalItems: items.length,
     lowStock: items.filter(i => i.quantity <= i.threshold).length,
-    totalValue: items.reduce((acc, curr) => acc + (curr.price || 0) * curr.quantity, 0)
+    totalValue: items.reduce((acc, curr) => acc + ((curr.purchase_price || 0) * curr.quantity), 0)
   };
 
   return (
@@ -245,7 +271,7 @@ export default function Inventory() {
                       <TableCell className="w-[200px]">
                         <div className="space-y-1.5">
                           <div className="flex justify-between text-[10px] font-medium text-gray-500">
-                            <span>{percentage.toFixed(0)}%</span>
+                            <span>{(percentage || 0).toFixed(0)}%</span>
                             <span>Threshold: {item.threshold}</span>
                           </div>
                           <Progress value={percentage} className={`h-1.5 ${isLow ? 'bg-red-100' : 'bg-gray-100'}`} />
@@ -253,6 +279,9 @@ export default function Inventory() {
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-2">
+                          <Button variant="ghost" size="icon" className="h-8 w-8 text-blue-500" onClick={() => handleEditClick(item)}>
+                            <Edit className="w-4 h-4" />
+                          </Button>
                           <Button variant="ghost" size="icon" className="h-8 w-8 text-red-500" onClick={() => handleDeleteItem(item.id)}>
                             <Trash2 className="w-4 h-4" />
                           </Button>
@@ -267,12 +296,18 @@ export default function Inventory() {
         </CardContent>
       </Card>
 
-      <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
-        <DialogContent className="sm:max-w-[425px]">
+      <Dialog open={showAddDialog} onOpenChange={(open) => {
+        setShowAddDialog(open);
+        if (!open) {
+          setEditingItemId(null);
+          setNewItem({ name: "", quantity: "", unit: "", threshold: "", purchase_price: "", selling_price: "" });
+        }
+      }}>
+        <DialogContent className="sm:max-w-[550px]">
           <DialogHeader>
-            <DialogTitle>Add Inventory Item</DialogTitle>
+            <DialogTitle>{editingItemId ? "Edit Inventory Item" : "Add Inventory Item"}</DialogTitle>
             <DialogDescription>
-              Add a new item to your center inventory.
+              {editingItemId ? "Update the details for this item." : "Add a new item to your center inventory."}
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-4">
@@ -306,9 +341,9 @@ export default function Inventory() {
                 />
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-3 gap-4">
               <div className="grid gap-2">
-                <Label htmlFor="i-thr">Threshold (Low Stock)</Label>
+                <Label htmlFor="i-thr">Threshold</Label>
                 <Input 
                   id="i-thr" 
                   type="number" 
@@ -318,13 +353,23 @@ export default function Inventory() {
                 />
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="i-price">Price Per Unit (Optional)</Label>
+                <Label htmlFor="i-pprice">Purchase Price</Label>
                 <Input 
-                  id="i-price" 
+                  id="i-pprice" 
                   type="number" 
                   placeholder="0.00" 
-                  value={newItem.price}
-                  onChange={(e) => setNewItem({...newItem, price: e.target.value})}
+                  value={newItem.purchase_price}
+                  onChange={(e) => setNewItem({...newItem, purchase_price: e.target.value})}
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="i-sprice">Selling Price</Label>
+                <Input 
+                  id="i-sprice" 
+                  type="number" 
+                  placeholder="0.00" 
+                  value={newItem.selling_price}
+                  onChange={(e) => setNewItem({...newItem, selling_price: e.target.value})}
                 />
               </div>
             </div>
@@ -332,7 +377,7 @@ export default function Inventory() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowAddDialog(false)}>Cancel</Button>
             <Button className="bg-blue-600" onClick={handleAddItem} disabled={isSubmitting}>
-              {isSubmitting ? "Adding..." : "Add Item"}
+              {isSubmitting ? (editingItemId ? "Updating..." : "Adding...") : (editingItemId ? "Update Item" : "Add Item")}
             </Button>
           </DialogFooter>
         </DialogContent>

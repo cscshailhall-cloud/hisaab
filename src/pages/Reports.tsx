@@ -124,17 +124,45 @@ export default function Reports() {
   }, [invoices]);
 
   const stats = useMemo(() => {
-    const totalRevenue = invoices.filter(i => i.status === 'Paid').reduce((acc, curr) => acc + curr.amount, 0);
+    let rawRevenue = 0;
+    let cash = 0, upi = 0, card = 0, pending = 0;
+    let totalProfit = 0;
+
+    invoices.forEach(inv => {
+      const invTotal = inv.total_amount ?? inv.amount ?? 0;
+      
+      if (inv.status === 'Paid') {
+        rawRevenue += invTotal;
+        if (inv.payment_method === 'cash') cash += invTotal;
+        else if (inv.payment_method === 'upi') upi += invTotal;
+        else if (inv.payment_method === 'card') card += invTotal;
+        else cash += invTotal; // fallback for old data without explicit method
+      } else {
+        pending += invTotal;
+      }
+
+      try {
+        const items = typeof inv.items === 'string' ? JSON.parse(inv.items || "[]") : (inv.items || []);
+        let costSum = 0;
+        items.forEach((item: any) => {
+          costSum += (item.cost || 0) * (item.quantity || 1);
+        });
+        if (inv.status === 'Paid') {
+          totalProfit += (invTotal - costSum);
+        }
+      } catch (e) {}
+    });
+
     const totalExpenses = expenses.reduce((acc, curr) => acc + curr.amount, 0);
-    const netProfit = totalRevenue - totalExpenses;
-    const avgBill = invoices.length > 0 ? totalRevenue / invoices.length : 0;
+    const netProfit = totalProfit - totalExpenses;
     
-    return [
-      { title: "Net Profit", value: `₹${netProfit.toLocaleString()}`, change: "+12.5%", positive: true },
-      { title: "Avg. Bill Value", value: `₹${Math.round(avgBill).toLocaleString()}`, change: "+5.2%", positive: true },
-      { title: "Customer Retention", value: "68%", change: "-2.1%", positive: false },
-      { title: "Staff Efficiency", value: "84%", change: "+8.4%", positive: true },
-    ];
+    return {
+      revenue: rawRevenue,
+      netProfit,
+      grossProfit: totalProfit,
+      expenses: totalExpenses,
+      breakdown: { cash, upi, card, pending }
+    };
   }, [invoices, expenses]);
 
   return (
@@ -240,22 +268,49 @@ export default function Reports() {
         </Card>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        {stats.map((stat) => (
+      <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
+        {[
+          { title: "Total Sales", value: `₹${stats.revenue.toLocaleString()}`, color: "text-blue-600" },
+          { title: "Gross Profit", value: `₹${stats.grossProfit.toLocaleString()}`, color: "text-green-600" },
+          { title: "Net Profit", value: `₹${stats.netProfit.toLocaleString()}`, color: stats.netProfit >= 0 ? "text-green-600" : "text-red-600" },
+          { title: "Total Expenses", value: `₹${stats.expenses.toLocaleString()}`, color: "text-red-500" },
+          { title: "Pending Dues", value: `₹${stats.breakdown.pending.toLocaleString()}`, color: "text-orange-500" }
+        ].map((stat) => (
           <Card key={stat.title} className="border-none shadow-sm">
-            <CardContent className="p-6">
-              <p className="text-sm text-gray-500 font-medium">{stat.title}</p>
-              <div className="flex items-end justify-between mt-2">
-                <h3 className="text-2xl font-bold text-gray-900">{stat.value}</h3>
-                <div className={`flex items-center text-xs font-bold ${stat.positive ? 'text-green-600' : 'text-red-600'}`}>
-                  {stat.positive ? <TrendingUp className="w-3 h-3 mr-1" /> : <TrendingDown className="w-3 h-3 mr-1" />}
-                  {stat.change}
-                </div>
-              </div>
+            <CardContent className="p-4 sm:p-6">
+              <p className="text-xs sm:text-sm text-gray-500 font-medium">{stat.title}</p>
+              <h3 className={`text-xl sm:text-2xl font-black mt-2 ${stat.color}`}>{stat.value}</h3>
             </CardContent>
           </Card>
         ))}
       </div>
+
+      <Card className="border-none shadow-sm">
+        <CardHeader>
+          <CardTitle className="text-lg">Payment Collection Breakdown</CardTitle>
+          <CardDescription>Sales segmented by payment mode</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="p-4 rounded-xl border border-gray-100 bg-emerald-50/50">
+              <p className="text-sm font-bold text-emerald-700">Cash Received</p>
+              <p className="text-2xl font-black text-emerald-600 mt-1">₹{stats.breakdown.cash.toLocaleString()}</p>
+            </div>
+            <div className="p-4 rounded-xl border border-gray-100 bg-purple-50/50">
+              <p className="text-sm font-bold text-purple-700">UPI / QR</p>
+              <p className="text-2xl font-black text-purple-600 mt-1">₹{stats.breakdown.upi.toLocaleString()}</p>
+            </div>
+            <div className="p-4 rounded-xl border border-gray-100 bg-blue-50/50">
+              <p className="text-sm font-bold text-blue-700">Card Terminal</p>
+              <p className="text-2xl font-black text-blue-600 mt-1">₹{stats.breakdown.card.toLocaleString()}</p>
+            </div>
+            <div className="p-4 rounded-xl border border-gray-100 bg-orange-50/50">
+              <p className="text-sm font-bold text-orange-700">Pending</p>
+              <p className="text-2xl font-black text-orange-600 mt-1">₹{stats.breakdown.pending.toLocaleString()}</p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       <Card className="border-none shadow-sm">
         <CardHeader>

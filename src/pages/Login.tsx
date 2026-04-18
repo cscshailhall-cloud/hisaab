@@ -63,9 +63,13 @@ export default function Login() {
             shop_name: shopName,
             address,
             updated_at: new Date().toISOString()
-          }).catch(console.error);
+          }).then(({ error }) => {
+            if (error) console.error(error);
+          });
         } else if (data.user) {
-          toast.success("Account created! Please check your email for confirmation.");
+          toast.success("Account created! Please check your email for confirmation.", { duration: 8000 });
+          setMode("login");
+          setPassword("");
         }
       }
     } catch (error: any) {
@@ -143,7 +147,7 @@ export default function Login() {
                     />
                   </div>
                 </div>
-                <Button className="w-full bg-blue-600 hover:bg-blue-700 h-11 font-bold" disabled={isLoading}>
+                <Button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 h-11 font-bold" disabled={isLoading}>
                   {isLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : "Send Reset Link"}
                 </Button>
               </form>
@@ -231,7 +235,7 @@ export default function Login() {
                     className="h-11"
                   />
                 </div>
-                <Button className="w-full bg-blue-600 hover:bg-blue-700 h-11 font-bold" disabled={isLoading}>
+                <Button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 h-11 font-bold" disabled={isLoading}>
                   {isLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : (mode === "login" ? "Sign In" : "Create Account")}
                 </Button>
               </form>

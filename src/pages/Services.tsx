@@ -26,7 +26,9 @@ import { Label } from "@/components/ui/label";
 interface Service {
   id: string;
   name: string;
-  price: number;
+  price?: number;
+  fee: number;
+  mrp_rate: number;
   category: string;
 }
 
@@ -34,7 +36,8 @@ export default function Services() {
   const [services, setServices] = useState<Service[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [showAddDialog, setShowAddDialog] = useState(false);
-  const [newService, setNewService] = useState({ name: "", price: "", category: "" });
+  const [editingServiceId, setEditingServiceId] = useState<string | null>(null);
+  const [newService, setNewService] = useState({ name: "", fee: "", mrp_rate: "", category: "" });
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
@@ -70,25 +73,48 @@ export default function Services() {
     s.category.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
+  const handleEditClick = (service: Service) => {
+    setNewService({
+      name: service.name || "",
+      fee: (service.fee || 0).toString(),
+      mrp_rate: (service.mrp_rate ?? service.price ?? 0).toString(),
+      category: service.category || "",
+    });
+    setEditingServiceId(service.id);
+    setShowAddDialog(true);
+  };
+
   const handleAddService = async () => {
-    if (!newService.name || !newService.price) {
-      toast.error("Name and Price are required");
+    if (!newService.name || (!newService.fee && !newService.mrp_rate)) {
+      toast.error("Name, Fee and MRP Rate are required");
       return;
     }
     setIsSubmitting(true);
     try {
-      const { error } = await supabase.from("services").insert({
+      const mrp = parseFloat(newService.mrp_rate || "0");
+      const serviceData = {
         name: newService.name,
-        price: parseFloat(newService.price),
+        fee: parseFloat(newService.fee || "0"),
+        mrp_rate: mrp,
+        price: mrp, // Backwards compatibility for old data structures
         category: newService.category,
-      });
-      if (error) throw error;
+      };
+
+      if (editingServiceId) {
+        const { error } = await supabase.from("services").update(serviceData).eq("id", editingServiceId);
+        if (error) throw error;
+        toast.success("Service updated successfully");
+      } else {
+        const { error } = await supabase.from("services").insert(serviceData);
+        if (error) throw error;
+        toast.success("Service added successfully");
+      }
       
-      toast.success("Service added successfully");
       setShowAddDialog(false);
-      setNewService({ name: "", price: "", category: "" });
+      setEditingServiceId(null);
+      setNewService({ name: "", fee: "", mrp_rate: "", category: "" });
     } catch (error: any) {
-      toast.error("Failed to add service", { description: error.message });
+      toast.error(editingServiceId ? "Failed to update service" : "Failed to add service", { description: error.message });
     } finally {
       setIsSubmitting(false);
     }
@@ -137,7 +163,8 @@ export default function Services() {
                 <TableRow>
                   <TableHead>Service Name</TableHead>
                   <TableHead>Category</TableHead>
-                  <TableHead>Price</TableHead>
+                  <TableHead>Fee</TableHead>
+                  <TableHead>MRP / Rate</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -157,9 +184,13 @@ export default function Services() {
                           {service.category || "General"}
                         </span>
                       </TableCell>
-                      <TableCell className="font-bold text-blue-600">₹{service.price}</TableCell>
+                      <TableCell className="font-bold text-gray-600">₹{service.fee || 0}</TableCell>
+                      <TableCell className="font-bold text-blue-600">₹{service.mrp_rate ?? service.price ?? 0}</TableCell>
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-2">
+                          <Button variant="ghost" size="icon" className="h-8 w-8 text-blue-500" onClick={() => handleEditClick(service)}>
+                            <Edit className="w-4 h-4" />
+                          </Button>
                           <Button variant="ghost" size="icon" className="h-8 w-8 text-red-500" onClick={() => handleDeleteService(service.id)}>
                             <Trash2 className="w-4 h-4" />
                           </Button>
@@ -174,10 +205,16 @@ export default function Services() {
         </CardContent>
       </Card>
 
-      <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
+      <Dialog open={showAddDialog} onOpenChange={(open) => {
+        setShowAddDialog(open);
+        if (!open) {
+          setEditingServiceId(null);
+          setNewService({ name: "", fee: "", mrp_rate: "", category: "" });
+        }
+      }}>
         <DialogContent className="sm:max-w-[425px]">
           <DialogHeader>
-            <DialogTitle>Add New Service</DialogTitle>
+            <DialogTitle>{editingServiceId ? "Edit Service" : "Add New Service"}</DialogTitle>
           </DialogHeader>
           <div className="grid gap-4 py-4">
             <div className="grid gap-2">
@@ -189,15 +226,27 @@ export default function Services() {
                 onChange={(e) => setNewService({...newService, name: e.target.value})}
               />
             </div>
-            <div className="grid gap-2">
-              <Label htmlFor="s-price">Price (₹)</Label>
-              <Input 
-                id="s-price" 
-                type="number" 
-                placeholder="0.00" 
-                value={newService.price}
-                onChange={(e) => setNewService({...newService, price: e.target.value})}
-              />
+            <div className="grid grid-cols-2 gap-4">
+              <div className="grid gap-2">
+                <Label htmlFor="s-fee">Fee (Cost) ₹</Label>
+                <Input 
+                  id="s-fee" 
+                  type="number" 
+                  placeholder="0.00" 
+                  value={newService.fee}
+                  onChange={(e) => setNewService({...newService, fee: e.target.value})}
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="s-mrp">MRP / Rate (Selling) ₹</Label>
+                <Input 
+                  id="s-mrp" 
+                  type="number" 
+                  placeholder="0.00" 
+                  value={newService.mrp_rate}
+                  onChange={(e) => setNewService({...newService, mrp_rate: e.target.value})}
+                />
+              </div>
             </div>
             <div className="grid gap-2">
               <Label htmlFor="s-cat">Category</Label>
@@ -212,7 +261,7 @@ export default function Services() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowAddDialog(false)}>Cancel</Button>
             <Button className="bg-blue-600" onClick={handleAddService} disabled={isSubmitting}>
-              {isSubmitting ? "Adding..." : "Add Service"}
+              {isSubmitting ? (editingServiceId ? "Updating..." : "Adding...") : (editingServiceId ? "Update Service" : "Add Service")}
             </Button>
           </DialogFooter>
         </DialogContent>

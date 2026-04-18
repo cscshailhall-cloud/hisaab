@@ -89,67 +89,69 @@ export default function Invoices() {
   const filteredInvoices = useMemo(() => {
     return invoices.filter(invoice => 
       invoice.invoice_no?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      invoice.customers?.name?.toLowerCase().includes(searchTerm.toLowerCase())
+      (invoice.customers?.name || invoice.customer_name || "").toLowerCase().includes(searchTerm.toLowerCase())
     );
   }, [searchTerm, invoices]);
 
   const stats = useMemo(() => {
-    const totalInvoiced = invoices.reduce((acc, curr) => acc + (curr.total_amount || 0), 0);
-    const outstanding = invoices.filter(i => i.status !== 'Paid').reduce((acc, curr) => acc + (curr.total_amount || 0), 0);
+    const totalInvoiced = invoices.reduce((acc, curr) => acc + (curr.total_amount || curr.amount || 0), 0);
+    const outstanding = invoices.filter(i => i.status !== 'Paid').reduce((acc, curr) => acc + (curr.total_amount || curr.amount || 0), 0);
     const paidThisMonth = invoices
-      .filter(i => i.status === 'Paid' && new Date(i.created_at).getMonth() === new Date().getMonth())
-      .reduce((acc, curr) => acc + (curr.total_amount || 0), 0);
+      .filter(i => i.status === 'Paid' && new Date(i.created_at || i.date).getMonth() === new Date().getMonth())
+      .reduce((acc, curr) => acc + (curr.total_amount || curr.amount || 0), 0);
     
     return { totalInvoiced, outstanding, paidThisMonth };
   }, [invoices]);
 
   const handleDownloadPDF = async () => {
-    const element = document.getElementById('invoice-preview-modal');
-    if (!element) return;
-    
-    try {
-      const canvas = await html2canvas(element, { scale: 2, useCORS: true });
-      const imgData = canvas.toDataURL('image/png');
-      const pdf = new jsPDF('p', 'mm', 'a4');
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
-      pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
-      pdf.save(`invoice-${selectedInvoice.invoice_no || selectedInvoice.id.slice(-6)}.pdf`);
-    } catch (e) {
-      toast.error("Failed to generate PDF");
-    }
+    toast.info("Opening print dialog to save as PDF...");
+    setTimeout(() => window.print(), 500);
+  };
+
+  const handleThermalPrint = () => {
+    toast.info("Sending to thermal POS printer...");
+    setTimeout(() => window.print(), 500);
   };
 
   const renderTemplate = (invoice: any) => {
-    if (!invoice || !config) return null;
+    if (!invoice) return null;
     
+    const safeConfig = config || {
+      invoice_prefix: "INV-",
+      invoice_template: "modern"
+    };
+    
+    // Safely calculate subtotal and tax to prevent NaN crashes
+    const safeItems = invoice.items || [];
+    const calculatedSubtotal = safeItems.reduce((acc: number, curr: any) => acc + ((curr.price || 0) * (curr.quantity || 1)), 0);
+    const itemDiscounts = safeItems.reduce((acc: number, curr: any) => acc + (curr.discount || 0), 0);
+
     const invoiceData: InvoiceData = {
-      invoice_no: invoice.invoice_no || `${config.invoice_prefix || 'INV-'}${invoice.id.slice(-6).toUpperCase()}`,
-      date: invoice.created_at,
-      customer_name: invoice.customers?.name || "Customer",
-      customer_phone: invoice.customers?.mobile,
-      items: invoice.items || [],
-      subtotal: (invoice.items || []).reduce((acc: number, curr: any) => acc + (curr.price * curr.quantity), 0),
-      tax_amount: (invoice.items || []).reduce((acc: number, curr: any) => acc + (curr.price * curr.quantity * (curr.tax / 100)), 0),
-      discount: invoice.discount || 0,
-      total: invoice.total_amount || 0,
-      status: invoice.status,
-      business_name: profile?.shop_name,
-      business_address: profile?.address,
-      business_phone: profile?.phone,
-      business_gst: config?.gst_number
+      invoice_no: invoice.invoice_no || `${safeConfig.invoice_prefix}${invoice.id.slice(-6).toUpperCase()}`,
+      date: invoice.created_at || invoice.date || new Date().toISOString(),
+      customer_name: invoice.customers?.name || invoice.customer_name || "Customer",
+      customer_phone: invoice.customers?.mobile || "",
+      items: safeItems,
+      subtotal: invoice.subtotal || calculatedSubtotal,
+      discount: (invoice.discount || 0) + itemDiscounts,
+      total: invoice.total_amount || invoice.amount || 0,
+      status: invoice.status || "Pending",
+      business_name: profile?.shop_name || "",
+      business_address: profile?.address || "",
+      business_phone: profile?.phone || "",
+      business_gst: safeConfig.gst_number || ""
     };
 
     const props = {
       data: invoiceData,
-      accentColor: config.accent_color,
-      showLogo: config.show_logo,
-      showQR: config.show_qr,
-      showBank: config.show_bank
+      accentColor: "#2563eb",
+      showLogo: true,
+      showQR: true,
+      showBank: true
     };
 
-    if (config.invoice_template === 'classic') return <div id="invoice-preview-modal"><ClassicTemplate {...props} /></div>;
-    if (config.invoice_template === 'minimal') return <div id="invoice-preview-modal"><MinimalTemplate {...props} /></div>;
+    if (safeConfig.invoice_template === 'classic') return <div id="invoice-preview-modal"><ClassicTemplate {...props} /></div>;
+    if (safeConfig.invoice_template === 'minimal') return <div id="invoice-preview-modal"><MinimalTemplate {...props} /></div>;
     return <div id="invoice-preview-modal"><ModernTemplate {...props} /></div>;
   };
 
@@ -233,9 +235,9 @@ export default function Invoices() {
                         <TableCell className="font-medium text-blue-600 uppercase">
                           {invoice.invoice_no || invoice.id.slice(-6)}
                         </TableCell>
-                        <TableCell className="font-medium">{invoice.customers?.name}</TableCell>
-                        <TableCell className="text-gray-500">{new Date(invoice.created_at).toLocaleDateString()}</TableCell>
-                        <TableCell className="font-bold text-right">₹{invoice.total_amount?.toFixed(2)}</TableCell>
+                        <TableCell className="font-medium">{invoice.customers?.name || invoice.customer_name || "Unknown"}</TableCell>
+                        <TableCell className="text-gray-500">{new Date(invoice.created_at || invoice.date).toLocaleDateString()}</TableCell>
+                        <TableCell className="font-bold text-right">₹{(invoice.total_amount || invoice.amount || 0).toFixed(2)}</TableCell>
                         <TableCell>
                           <Badge className={cn(
                             "border-none",
@@ -246,7 +248,7 @@ export default function Invoices() {
                           </Badge>
                         </TableCell>
                         <TableCell>
-                          <Badge variant="outline" className="text-[10px] uppercase">{invoice.payment_method}</Badge>
+                          <Badge variant="outline" className="text-[10px] uppercase">{invoice.payment_method || invoice.method || "CASH"}</Badge>
                         </TableCell>
                         <TableCell className="text-right">
                           <div className="flex justify-end gap-1">
@@ -305,14 +307,14 @@ export default function Invoices() {
       <Dialog open={showPreview} onOpenChange={setShowPreview}>
         <DialogContent className="sm:max-w-[1000px] p-0 overflow-hidden flex flex-col md:flex-row h-[90vh]">
           {/* Left Side: Real Preview */}
-          <div className="flex-1 bg-gray-100 overflow-y-auto p-8 border-r">
-            <div className="max-w-[800px] mx-auto shadow-2xl origin-top transition-all">
+          <div id="print-container" className="flex-1 bg-gray-100 overflow-y-auto p-4 md:p-8 border-r print:absolute print:inset-0 print:bg-white print:p-0 print:overflow-visible">
+            <div className="max-w-[800px] mx-auto shadow-2xl origin-top transition-all print:shadow-none print:max-w-none">
               {renderTemplate(selectedInvoice)}
             </div>
           </div>
 
           {/* Right Side: Actions */}
-          <div className="w-full md:w-80 bg-white flex flex-col">
+          <div className="w-full md:w-80 bg-white flex flex-col print:hidden">
             <div className="bg-blue-600 p-6 text-white shrink-0">
               <DialogTitle className="text-xl">Invoice Actions</DialogTitle>
               <p className="text-blue-100 text-sm mt-1">#{selectedInvoice?.id.slice(-6).toUpperCase()}</p>
@@ -341,7 +343,7 @@ export default function Invoices() {
                       <p className="text-[10px] text-gray-500">Standard A4 Format</p>
                     </div>
                   </Button>
-                  <Button variant="outline" className="justify-start h-12 gap-3" onClick={() => toast.info("Thermal printing...")}>
+                  <Button variant="outline" className="justify-start h-12 gap-3" onClick={handleThermalPrint}>
                     <Printer className="w-5 h-5 text-gray-600" />
                     <div className="text-left">
                       <p className="text-sm font-bold">Thermal Print</p>
